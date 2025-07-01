@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Troubleshoot</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* ... style เดิมของหน้าแชท ... */
+        .ai-options {
+            padding: 10px 15px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            border-bottom: 1px solid #eee;
+            background-color: #f8f9fa;
+        }
+        .ai-options label {
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+        #manual-select {
+            flex-grow: 1;
+            padding: 8px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <header class="main-header">
+        <h1>AI Troubleshoot</h1>
+        <p>ระบบช่วยวิเคราะห์และแก้ปัญหาจากคู่มือและรูปภาพ</p>
+    </header>
+
+    <main class="content">
+        <div class="chat-container" style="max-width: 900px;">
+            <div class="ai-options">
+                <label for="manual-select">ค้นหาใน:</label>
+                <select name="manuals" id="manual-select">
+                  <option value="all">คู่มือทั้งหมด</option>
+                  <option value="ZFK7-Zirconia-Oxygen-Analyzer.pdf">ZFK7 Oxygen Analyzer</option>
+                  <option value="ZPA NDIR Type Infrared Gas Analyzer.pdf">ZPA NDIR Gas Analyzer</option>
+                  <option value="manual_cooler_ecp3000.pdf">Cooler ECP3000</option>
+                  <option value="manual_probe_sp2200.pdf">Probe SP2200</option>
+                  <option value="manual_pump_mp30.pdf">Pump MP30</option>
+                  <option value="manual_liquid_stop_lb1.pdf">Liquid Stop LB-1</option>
+                  <option value="manual_filter_clf5.pdf">Filter CLF-5</option>
+                  <option value="manual_filter_fp2t.pdf">Filter FP-2T</option>
+                  <option value="manual_flow_meter_vfb65.pdf">Flow Meter VFB-65</option>
+                  <option value="manual_flow_switch_lph125.pdf">Flow Switch LPH125</option>
+                  <option value="manual_heated_line.pdf">Heated Sample Line</option>
+                  <option value="manual_peristaltic_pump_sr25.pdf">Peristaltic Pump SR25</option>
+                  <option value="manual_peristaltic_pump_sr25_5rpm.pdf">Peristaltic Pump SR25 (5rpm)</option>
+                  <option value="manual_ppd_md_series.pdf">PPD MD-Series Manual</option>
+                  <option value="msds_h3po4.pdf">MSDS H3PO4</option>
+                  <option value="CEMS_Drawing_QL.pdf">CEMS Drawing QL</option>
+                </select>
+            </div>
+            
+            <div id="chat-messages" class="chat-messages">
+                <div class="chat-message ai-message">
+                    <strong>AI Assistant:</strong> สวัสดีครับ กรุณาเลือกไฟล์คู่มือที่ต้องการค้นหา (หรือค้นหาทั้งหมด) แล้วเริ่มถามคำถามได้เลยครับ
+                </div>
+            </div>
+            
+            <div id="image-preview-container"></div>
+
+            <div class="chat-input-area">
+                <input type="text" id="chat-input" placeholder="ตัวอย่าง: ZPA ขึ้น error no.5">
+                <button id="upload-btn" title="อัปโหลดรูปภาพ" class="button-back">📎</button>
+                <button id="send-btn" class="button-link">ส่ง</button>
+                <input type="file" id="image-upload-input" hidden accept="image/*">
+            </div>
+        </div>
+        <a href="index.html" class="button-back" style="margin-top:20px;">&larr; กลับไปหน้าหลัก</a>
+    </main>
+
+    <script src="database.js"></script>
+    <script src="ai_chat.js"></script>
+</body>
+</html>

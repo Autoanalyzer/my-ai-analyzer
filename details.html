@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Equipment Details</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header class="main-header">
+        <h1 id="detail-name">Loading...</h1>
+    </header>
+
+    <main class="content">
+        <div class="detail-card">
+            <h2>Details</h2>
+            <p><strong>Model:</strong> <span id="detail-model"></span></p>
+            <p><strong>Serial No:</strong> <span id="detail-serial"></span></p>
+            <hr>
+            <h3>📋 PM Checklist</h3>
+            <ul id="detail-checklist"></ul>
+            <hr>
+            <a id="detail-manual" href="#" class="button-link" target="_blank">เปิดคู่มือ (PDF)</a>
+            <button id="ai-analyze-btn" class="diagram-button">วิเคราะห์ด้วย AI</button>
+            <a href="index.html?show=diagram" class="button-back">&larr; ย้อนกลับ</a>
+        </div>
+    </main>
+
+    <script src="database.js"></script>
+    <script src="details.js"></script>
+</body>
+</html>

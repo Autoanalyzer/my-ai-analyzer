@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analyzer Preventive Maintenance</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <header class="main-header">
+        <h1>Analyzer</h1>
+        <p>Preventive Maintenance</p>
+    </header>
+
+    <main class="content">
+        <h2>AREA</h2>
+        <div class="area-selector">
+            <button id="pulp1-btn" class="area-button" onclick="showArea('pulp1')">PULP 1</button>
+            <button id="pulp2-btn" class="area-button" onclick="showArea('pulp2')">PULP 2</button>
+        </div>
+
+        <div id="pulp1-area" class="sub-area-container">
+            <h3>PULP 1 Devices</h3>
+        </div>
+
+        <div id="pulp2-area" class="sub-area-container">
+            <h3>PULP 2 Devices</h3>
+            <div class="device-buttons">
+                <button>LK2</button>
+                <button onclick="showDeviceContent('pulp2-ql-options')">QL</button>
+                <button>LQB2</button>
+            </div>
+
+            <div id="pulp2-ql-options" class="device-content-container">
+                <hr>
+                <h4>QL Options</h4>
+                <div class="device-buttons">
+                    <button class="button-link" onclick="openDrawingModal('documents/ql/CEMS_Drawing_QL.pdf')">Static Drawing (PDF)</button>
+                    <button class="diagram-button" onclick="openInteractiveDiagramModal()">Interactive Diagram</button>
+                    <a href="manuals.html" class="button-link">All manual</a>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="drawingModal" class="modal-backdrop">
+        <div class="modal-content modal-content-fullscreen">
+            <div class="modal-header"><h2>Drawing Viewer</h2><span class="close-button" onclick="closeDrawingModal()">&times;</span></div>
+            <div class="drawing-modal-body"><iframe id="pdf-viewer" src="" width="100%" height="100%"></iframe></div>
+        </div>
+    </div>
+
+    <div id="interactiveDiagramModal" class="modal-backdrop">
+        <div class="modal-content modal-content-fullscreen">
+            <div class="modal-header"><h2>Interactive Diagram</h2><span class="close-button" onclick="closeInteractiveDiagramModal()">&times;</span></div>
+            <div class="diagram-modal-body">
+                <img id="interactive-diagram-image" src="images/cems_diagram_main.png" alt="CEMS Main Diagram" usemap="#main-diagram-map">
+                <map name="main-diagram-map">
+                    <area alt="SAMPLING PROBE" href="#" coords="68,129,94,125,92,157,68,155" shape="poly" onclick="goToDetailsPage(1)" onmouseover="showTooltip(event, 1)" onmouseout="hideTooltip()">
+                    <area alt="HEATED-LINE" href="#" coords="103,201,94,141,99,197,103,197,111,197,201,201,201,201,103,201,201,201" shape="poly" onclick="goToDetailsPage(2)" onmouseover="showTooltip(event, 2)" onmouseout="hideTooltip()">
+                    <area alt="COOLER" href="#" coords="269,192,293,210" shape="rect" onclick="goToDetailsPage(3)" onmouseover="showTooltip(event, 3)" onmouseout="hideTooltip()">
+                    <area alt="LIQUID-STOP-LB1PV" href="#" coords="326,194,338,213" shape="rect" onclick="goToDetailsPage(6)" onmouseover="showTooltip(event, 6)" onmouseout="hideTooltip()">
+                    <area alt="Sample pumb Model MP30" href="#" coords="392,193,427,221" shape="rect" onclick="goToDetailsPage(16)" onmouseover="showTooltip(event, 16)" onmouseout="hideTooltip()">
+                    <area alt="Flow Switch" href="#" coords="453,200,8" shape="circle" onclick="goToDetailsPage(13)" onmouseover="showTooltip(event, 13)" onmouseout="hideTooltip()">
+                    <area alt="STACK" href="#" coords="32,24,31,184,57,190,56,23" shape="poly" onclick="goToDetailsPage(200)" onmouseover="showTooltip(event, 200)" onmouseout="hideTooltip()">
+                    <area alt="DUST" href="#" coords="64,89,89,89,90,120,64,118" shape="poly" onclick="goToDetailsPage(201)" onmouseover="showTooltip(event, 201)" onmouseout="hideTooltip()">
+                    <area alt="Filter Presure Regulator,0-1 Bars" href="#" coords="216,191,234,208" shape="rect" onclick="goToDetailsPage(14)" onmouseover="showTooltip(event, 14)" onmouseout="hideTooltip()">
+                    <area alt="Glass Fiber Filter" href="#" coords="538,186,547,215" shape="rect" onclick="goToDetailsPage(10)" onmouseover="showTooltip(event, 10)" onmouseout="hideTooltip()">
+                    <area alt="Peristaltic Pump" href="#" coords="282,303,9" shape="circle" onclick="goToDetailsPage(4)" onmouseover="showTooltip(event, 4)" onmouseout="hideTooltip()">
+                </map>
+            </div>
+            <div class="modal-footer zoom-controls"><button onclick="zoomOut()">ซูมออก (-)</button><button onclick="resetZoom()">รีเซ็ต (100%)</button><button onclick="zoomIn()">ซูมเข้า (+)</button></div>
+        </div>
+    </div>
+    
+    <div id="custom-tooltip"></div>
+
+    <script src="database.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
