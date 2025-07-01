@@ -12,7 +12,7 @@ const { MemoryVectorStore } = require("langchain/vectorstores/memory");
 const { RecursiveCharacterTextSplitter } = require("langchain/text_splitter");
 
 const app = express();
-const port = 4000;
+const port = process.env.PORT || 4000;
 
 app.use(cors());
 app.use(express.json());

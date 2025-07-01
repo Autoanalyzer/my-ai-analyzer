@@ -4,6 +4,7 @@
   "description": "",
   "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -20,5 +21,8 @@
     "express": "^4.19.2",
     "langchain": "^0.3.29",
     "pdf-parse": "^1.1.1"
+  },
+  "engines": {
+    "node": "22."
   }
 }
