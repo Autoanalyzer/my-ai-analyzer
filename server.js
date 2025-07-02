@@ -3,8 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs/promises');
-const path = require('path');
 const pdf = require('pdf-parse');
+const path = require('path'); // --- เพิ่มตรงนี้ 1: เรียกใช้โมดูล path ---
 
 const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 const { GoogleGenerativeAIEmbeddings } = require("@langchain/google-genai");
@@ -17,9 +17,11 @@ const port = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json());
 
+// --- เพิ่มตรงนี้ 2: บอกให้ Express รู้จักโฟลเดอร์ public ที่เก็บไฟล์หน้าเว็บ ---
+app.use(express.static(path.join(__dirname, 'public')));
+
 const upload = multer({ storage: multer.memoryStorage() });
 
-// --- จุดที่แก้ไข 1: เพิ่มการตั้งค่าความปลอดภัย ---
 const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
     { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -28,14 +30,14 @@ const safetySettings = [
 ];
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const generativeModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash", safetySettings });
+const generativeModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash", safetySettings });
 const embeddingsModel = new GoogleGenerativeAIEmbeddings({ apiKey: process.env.GEMINI_API_KEY, model: "text-embedding-004" });
 
 let vectorStore;
 
 async function initializeVectorStore() {
     console.log("Initializing Vector Store...");
-    const documentsDir = path.join(__dirname, 'documents', 'ql');
+    const documentsDir = path.join(__dirname, 'documents');
     const documents = [];
 
     try {
@@ -120,7 +122,6 @@ app.post('/chat', upload.single('image'), async (req, res) => {
         res.json({ answer: text });
 
     } catch (error) {
-        // --- จุดที่แก้ไข 2: เพิ่มการแสดงผล Error ให้ละเอียด ---
         console.error("--- ERROR IN /CHAT ENDPOINT ---");
         console.error("Error Time:", new Date().toISOString());
         console.error("Error Details:", error);
@@ -129,8 +130,13 @@ app.post('/chat', upload.single('image'), async (req, res) => {
     }
 });
 
+// --- เพิ่มตรงนี้ 3: บอกให้ส่งไฟล์ index.html เมื่อมีคนเข้าหน้าแรก ---
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+
 app.listen(port, () => {
     console.log(`Backend server is running at http://localhost:${port}`);
     initializeVectorStore();
 });
-
