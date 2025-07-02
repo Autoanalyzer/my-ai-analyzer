@@ -18,7 +18,7 @@ app.use(cors());
 app.use(express.json());
 
 // --- เพิ่มตรงนี้ 2: บอกให้ Express รู้จักโฟลเดอร์ public ที่เก็บไฟล์หน้าเว็บ ---
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(__dirname));
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -132,7 +132,7 @@ app.post('/chat', upload.single('image'), async (req, res) => {
 
 // --- เพิ่มตรงนี้ 3: บอกให้ส่งไฟล์ index.html เมื่อมีคนเข้าหน้าแรก ---
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 
