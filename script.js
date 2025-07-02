@@ -99,3 +99,7 @@ document.addEventListener('DOMContentLoaded', function() {
         showDeviceContent('pulp2-ql-options');
     }
 });
+
+
+
+

@@ -37,7 +37,7 @@ let vectorStore;
 
 async function initializeVectorStore() {
     console.log("Initializing Vector Store...");
-    const documentsDir = path.join(__dirname, 'documents');
+    const documentsDir = path.join(__dirname, 'documents', 'ql');
     const documents = [];
 
     try {
@@ -140,3 +140,4 @@ app.listen(port, () => {
     console.log(`Backend server is running at http://localhost:${port}`);
     initializeVectorStore();
 });
+
