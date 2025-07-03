@@ -4,7 +4,7 @@ const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs/promises');
 const pdf = require('pdf-parse');
-const path = require('path'); // --- เพิ่มตรงนี้ 1: เรียกใช้โมดูล path ---
+const path = require('path');
 
 const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 const { GoogleGenerativeAIEmbeddings } = require("@langchain/google-genai");
@@ -14,10 +14,11 @@ const { RecursiveCharacterTextSplitter } = require("langchain/text_splitter");
 const app = express();
 const port = process.env.PORT || 4000;
 
+// --- 1. เพิ่มตัวแปรสำหรับเก็บประวัติแชท ---
+const chatHistories = {}; 
+
 app.use(cors());
 app.use(express.json());
-
-// --- เพิ่มตรงนี้ 2: บอกให้ Express รู้จักโฟลเดอร์ public ที่เก็บไฟล์หน้าเว็บ ---
 app.use(express.static(__dirname));
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -75,62 +76,64 @@ async function initializeVectorStore() {
     }
 }
 
+// --- 2. แทนที่ app.post('/chat', ...) เดิมทั้งหมดด้วยโค้ดชุดใหม่นี้ ---
 app.post('/chat', upload.single('image'), async (req, res) => {
     try {
-        const userQuestion = req.body.question || "";
-        const targetManual = req.body.manual;
+        let { sessionId, question, manual } = req.body;
         const imageFile = req.file;
 
-        if (!userQuestion) {
-            return res.status(400).json({ error: 'Question is required.' });
-        }
-        if (!vectorStore) {
-            return res.status(503).json({ error: 'AI knowledge base is not ready. Please try again later.' });
+        // ตรวจสอบ Session ID ถ้าไม่มี ให้สร้างใหม่
+        if (!sessionId) {
+            sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+            chatHistories[sessionId] = []; // สร้างประวัติแชทใหม่สำหรับ session นี้
+            console.log(`New session created: ${sessionId}`);
         }
 
-        const filterFunction = (doc) => {
-            if (targetManual && targetManual !== 'all') {
-                return doc.metadata.source === targetManual;
-            }
-            return true;
-        };
+        const history = chatHistories[sessionId] || [];
 
-        const relevantDocs = await vectorStore.similaritySearch(userQuestion, 4, filterFunction);
+        if (!question) return res.status(400).json({ error: 'Question is required.' });
+        if (!vectorStore) return res.status(503).json({ error: 'AI knowledge base is not ready.' });
+
+        const filterFunction = (doc) => (manual && manual !== 'all') ? doc.metadata.source === manual : true;
+        const relevantDocs = await vectorStore.similaritySearch(question, 4, filterFunction);
         const context = relevantDocs.map(doc => `Source: ${doc.metadata.source}\nContent:\n${doc.pageContent}`).join("\n\n---\n\n");
 
-        const promptParts = [];
-        let prompt = `คุณคือผู้เชี่ยวชาญด้านการบำรุงรักษาอุปกรณ์ CEMS โปรดตอบคำถามต่อไปนี้โดยอ้างอิงจากข้อมูลในคู่มือที่ให้มา ตอบเป็นภาษาไทย
-        --- ข้อมูลจากคู่มือที่เกี่ยวข้อง ---
+        // สร้าง Prompt โดยใส่ "ประวัติการแชท" เข้าไปด้วย
+        const fullPrompt = `คุณคือผู้เชี่ยวชาญด้านการบำรุงรักษาอุปกรณ์ CEMS โปรดตอบคำถามโดยอ้างอิงจากข้อมูลในคู่มือและบทสนทนาก่อนหน้า
+        --- ข้อมูลจากคู่มือ ---
         ${context || "ไม่พบข้อมูลที่เกี่ยวข้องในคู่มือ"}
         --- จบข้อมูลจากคู่มือ ---
-        คำถามของผู้ใช้: "${userQuestion}"
+        
+        --- ประวัติการสนทนาที่ผ่านมา ---
+        ${history.map(h => `User: ${h.question}\nAI: ${h.answer}`).join('\n\n')}
+        --- จบประวัติการสนทนา ---
+        
+        คำถามล่าสุดของผู้ใช้: "${question}"
         คำตอบของคุณ:`;
-        
-        promptParts.push({ text: prompt });
-        
+
+        const promptParts = [{ text: fullPrompt }];
         if (imageFile) {
-            promptParts.push({ text: "โปรดวิเคราะห์รูปภาพต่อไปนี้ประกอบการตอบคำถามด้วย:" });
-            promptParts.push({
-                inlineData: { data: imageFile.buffer.toString("base64"), mimeType: imageFile.mimetype },
-            });
+            promptParts.push({ text: "วิเคราะห์รูปภาพนี้ประกอบด้วย:" });
+            promptParts.push({ inlineData: { data: imageFile.buffer.toString("base64"), mimeType: imageFile.mimetype } });
         }
 
         const result = await generativeModel.generateContent({ contents: [{ role: "user", parts: promptParts }] });
         const response = await result.response;
-        const text = response.text();
-        
-        res.json({ answer: text });
+        const answer = response.text();
+
+        // บันทึกคำถามและคำตอบล่าสุดลงในประวัติ
+        chatHistories[sessionId].push({ question, answer });
+
+        // ส่งคำตอบและ Session ID กลับไป
+        res.json({ answer, sessionId });
 
     } catch (error) {
-        console.error("--- ERROR IN /CHAT ENDPOINT ---");
-        console.error("Error Time:", new Date().toISOString());
-        console.error("Error Details:", error);
-        console.error("--- END OF ERROR ---");
-        res.status(500).json({ error: 'Failed to get response from AI. Please check the server console for details.' });
+        console.error("Error in /chat endpoint:", error);
+        res.status(500).json({ error: 'Failed to get response from AI.' });
     }
 });
 
-// --- เพิ่มตรงนี้ 3: บอกให้ส่งไฟล์ index.html เมื่อมีคนเข้าหน้าแรก ---
+
 app.get('/', (req, res) => {
      res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -140,4 +143,3 @@ app.listen(port, () => {
     console.log(`Backend server is running at http://localhost:${port}`);
     initializeVectorStore();
 });
-
