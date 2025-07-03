@@ -14,12 +14,13 @@ const { RecursiveCharacterTextSplitter } = require("langchain/text_splitter");
 const app = express();
 const port = process.env.PORT || 4000;
 
-// --- 1. เพิ่มตัวแปรสำหรับเก็บประวัติแชท ---
+// ตัวแปรสำหรับเก็บประวัติแชทของทุก session
 const chatHistories = {}; 
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(__dirname));
+// ทำให้เซิร์ฟเวอร์รู้จักไฟล์หน้าบ้าน (HTML, CSS, JS) ที่อยู่ในโฟลเดอร์หลัก
+app.use(express.static(__dirname)); 
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -38,6 +39,7 @@ let vectorStore;
 
 async function initializeVectorStore() {
     console.log("Initializing Vector Store...");
+    // แก้ไข Path ให้ถูกต้อง ชี้ไปที่โฟลเดอร์ ql
     const documentsDir = path.join(__dirname, 'documents', 'ql');
     const documents = [];
 
@@ -76,16 +78,16 @@ async function initializeVectorStore() {
     }
 }
 
-// --- 2. แทนที่ app.post('/chat', ...) เดิมทั้งหมดด้วยโค้ดชุดใหม่นี้ ---
+// Endpoint สำหรับแชทที่จัดการ Session และประวัติการสนทนา
 app.post('/chat', upload.single('image'), async (req, res) => {
     try {
         let { sessionId, question, manual } = req.body;
         const imageFile = req.file;
 
-        // ตรวจสอบ Session ID ถ้าไม่มี ให้สร้างใหม่
+        // 1. ตรวจสอบ Session ID ถ้าไม่มี ให้สร้างใหม่
         if (!sessionId) {
             sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-            chatHistories[sessionId] = []; // สร้างประวัติแชทใหม่สำหรับ session นี้
+            chatHistories[sessionId] = []; 
             console.log(`New session created: ${sessionId}`);
         }
 
@@ -94,11 +96,12 @@ app.post('/chat', upload.single('image'), async (req, res) => {
         if (!question) return res.status(400).json({ error: 'Question is required.' });
         if (!vectorStore) return res.status(503).json({ error: 'AI knowledge base is not ready.' });
 
+        // 2. ค้นหาข้อมูลจาก Vector Store
         const filterFunction = (doc) => (manual && manual !== 'all') ? doc.metadata.source === manual : true;
         const relevantDocs = await vectorStore.similaritySearch(question, 4, filterFunction);
         const context = relevantDocs.map(doc => `Source: ${doc.metadata.source}\nContent:\n${doc.pageContent}`).join("\n\n---\n\n");
 
-        // สร้าง Prompt โดยใส่ "ประวัติการแชท" เข้าไปด้วย
+        // 3. สร้าง Prompt โดยใส่ประวัติการแชทเข้าไปด้วย
         const fullPrompt = `คุณคือผู้เชี่ยวชาญด้านการบำรุงรักษาอุปกรณ์ CEMS โปรดตอบคำถามโดยอ้างอิงจากข้อมูลในคู่มือและบทสนทนาก่อนหน้า
         --- ข้อมูลจากคู่มือ ---
         ${context || "ไม่พบข้อมูลที่เกี่ยวข้องในคู่มือ"}
@@ -117,14 +120,15 @@ app.post('/chat', upload.single('image'), async (req, res) => {
             promptParts.push({ inlineData: { data: imageFile.buffer.toString("base64"), mimeType: imageFile.mimetype } });
         }
 
+        // 4. ส่งไปให้ AI ประมวลผล
         const result = await generativeModel.generateContent({ contents: [{ role: "user", parts: promptParts }] });
         const response = await result.response;
         const answer = response.text();
 
-        // บันทึกคำถามและคำตอบล่าสุดลงในประวัติ
+        // 5. บันทึกคำถามและคำตอบล่าสุดลงในประวัติ
         chatHistories[sessionId].push({ question, answer });
 
-        // ส่งคำตอบและ Session ID กลับไป
+        // 6. ส่งคำตอบและ Session ID กลับไป
         res.json({ answer, sessionId });
 
     } catch (error) {
@@ -133,12 +137,12 @@ app.post('/chat', upload.single('image'), async (req, res) => {
     }
 });
 
-
+// Endpoint สำหรับส่งไฟล์ index.html เมื่อมีคนเข้าหน้าแรก
 app.get('/', (req, res) => {
      res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-
+// เริ่มการทำงานของเซิร์ฟเวอร์
 app.listen(port, () => {
     console.log(`Backend server is running at http://localhost:${port}`);
     initializeVectorStore();
