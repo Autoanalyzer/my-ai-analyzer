@@ -4,23 +4,38 @@ const pdfViewer = document.getElementById('pdf-viewer');
 const interactiveDiagramModal = document.getElementById('interactiveDiagramModal');
 const diagramImage = document.getElementById('interactive-diagram-image');
 const tooltip = document.getElementById('custom-tooltip');
+
 let currentZoom = 1.0;
 
 // --- ฟังก์ชันควบคุมหน้าเว็บ ---
 function showArea(areaId) {
     document.querySelectorAll('.sub-area-container').forEach(area => { area.style.display = 'none'; });
     document.querySelectorAll('.device-content-container').forEach(content => { content.style.display = 'none'; });
+
     const selectedArea = document.getElementById(areaId + '-area');
     if (selectedArea) { selectedArea.style.display = 'block'; }
+
     document.querySelectorAll('.area-button').forEach(button => { button.classList.remove('active'); });
     const selectedButton = document.getElementById(areaId + '-btn');
-    if(selectedButton) { selectedButton.classList.add('active'); }
+    if (selectedButton) { selectedButton.classList.add('active'); }
 }
 
 function showDeviceContent(contentId) {
-    const content = document.getElementById(contentId);
-    if(content) {
-        content.style.display = content.style.display === 'block' ? 'none' : 'block';
+    // อ้างอิงถึง options ที่ต้องการแสดงผล
+    const targetContent = document.getElementById(contentId);
+    if (!targetContent) return; // ออกถ้าไม่เจอ element
+
+    // เก็บสถานะว่า options ที่กดกำลังแสดงอยู่หรือไม่ (ก่อนที่จะทำอะไรต่อไป)
+    const isAlreadyVisible = targetContent.style.display === 'block';
+
+    // *** จุดสำคัญ: ซ่อน Options ทั้งหมดก่อนเสมอ ***
+    document.querySelectorAll('.device-content-container').forEach(container => {
+        container.style.display = 'none';
+    });
+
+    // ถ้า options ที่เรากดเลือก "ยังไม่ได้แสดงอยู่" ก็ให้เปิดมันขึ้นมา
+    if (!isAlreadyVisible) {
+        targetContent.style.display = 'block';
     }
 }
 
@@ -56,6 +71,7 @@ function closeInteractiveDiagramModal() {
 function showTooltip(event, equipmentId) {
     const data = equipmentDatabase[equipmentId];
     if (!data || !tooltip) return;
+
     const tooltipContent = `<strong>${data.name.split(',')[0]}</strong><br>Model: ${data.model}`;
     tooltip.innerHTML = tooltipContent;
     tooltip.style.display = 'block';
@@ -69,13 +85,12 @@ function hideTooltip() {
 }
 
 function moveTooltip(event) {
-     if (tooltip && tooltip.style.display === 'block') {
+    if (tooltip && tooltip.style.display === 'block') {
         tooltip.style.left = (event.pageX + 15) + 'px';
         tooltip.style.top = (event.pageY + 15) + 'px';
     }
 }
 document.addEventListener('mousemove', moveTooltip);
-
 
 // --- ฟังก์ชันอื่นๆ ---
 window.onclick = function(event) {
@@ -83,14 +98,19 @@ window.onclick = function(event) {
     if (event.target == interactiveDiagramModal) { closeInteractiveDiagramModal(); }
 }
 
-function applyZoom() { if (diagramImage) { diagramImage.style.transform = 'scale(' + currentZoom + ')'; } }
-function zoomIn() { currentZoom += 0.2; applyZoom(); }
+function applyZoom() {
+    if (diagramImage) {
+        diagramImage.style.transform = 'scale(' + currentZoom + ')';
+    }
+}
+function zoomIn()  { currentZoom += 0.2; applyZoom(); }
 function zoomOut() { if (currentZoom > 0.4) { currentZoom -= 0.2; } applyZoom(); }
-function resetZoom() { currentZoom = 1.0; applyZoom(); }
+function resetZoom(){ currentZoom = 1.0; applyZoom(); }
 
 document.addEventListener('DOMContentLoaded', function() {
     const urlParams = new URLSearchParams(window.location.search);
     const showParam = urlParams.get('show');
+
     if (showParam === 'diagram') {
         showArea('pulp2');
         openInteractiveDiagramModal();

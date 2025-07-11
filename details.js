@@ -34,7 +34,7 @@ window.onload = function() {
             aiButton.disabled = true;
 
             try {
-                const response = await fetch(`http://localhost:4000/get-pm-checklist?name=${encodeURIComponent(currentEquipment.name)}&model=${encodeURIComponent(currentEquipment.model)}`);
+                const response = await fetch(`http://localhost:5500/get-pm-checklist?name=${encodeURIComponent(currentEquipment.name)}&model=${encodeURIComponent(currentEquipment.model)}`);
                 const aiData = await response.json();
 
                 if (response.ok && aiData.checklist) {

@@ -19,30 +19,9 @@
         <div class="manuals-grid">
             
             <div class="detail-card">
-                <h2>เลือกคู่มืออ้างอิง</h2>
+                <h2 id="manuals-title">กำลังโหลดคู่มือ...</h2>
                 <div class="manuals-list-container">
-                    <a href="documents/ql/CEMS_Drawing_QL.pdf" target="_blank" class="button-link">CEMS Drawing QL</a>
-                    <a href="documents/ql/manual_cooler_ecp3000.pdf" target="_blank" class="button-link">Cooler ECP3000</a>
-                    <a href="documents/ql/manual_filter_clf5.pdf" target="_blank" class="button-link">Filter CLF-5</a>
-                    <a href="documents/ql/manual_filter_fp2t.pdf" target="_blank" class="button-link">Filter FP-2T</a>
-                    <a href="documents/ql/manual_flow_meter_vfb65.pdf" target="_blank" class="button-link">Flow Meter VFB-65</a>
-                    <a href="documents/ql/manual_flow_switch_lph125.pdf" target="_blank" class="button-link">Flow Switch LPH125</a>
-                    <a href="documents/ql/manual_heated_line.pdf" target="_blank" class="button-link">Heated Sample Line</a>
-                    <a href="documents/ql/manual_liquid_stop_lb1.pdf" target="_blank" class="button-link">Liquid Stop LB-1</a>
-                    <a href="documents/ql/manual_peristaltic_pump_sr25.pdf" target="_blank" class="button-link">Peristaltic Pump SR25</a>
-                    <a href="documents/ql/manual_peristaltic_pump_sr25_5rpm.pdf" target="_blank" class="button-link">Peristaltic Pump SR25 (5rpm)</a>
-                    <a href="documents/ql/manual_ppd_md_series.pdf" target="_blank" class="button-link">PPD MD-Series Manual</a>
-                    <a href="documents/ql/manual_probe_sp2200.pdf" target="_blank" class="button-link">Probe SP2200</a>
-                    <a href="documents/ql/manual_pump_mp30.pdf" target="_blank" class="button-link">Pump MP30</a>
-                    <a href="documents/ql/msds_h3po4.pdf" target="_blank" class="button-link">MSDS H3PO4</a>
-                    <a href="documents/ql/ZFK7-Zirconia-Oxygen-Analyzer.pdf" target="_blank" class="button-link">ZFK7 Oxygen Analyzer</a>
-                    <a href="documents/ql/ZPA NDIR Type Infrared Gas Analyzer.pdf" target="_blank" class="button-link">ZPA NDIR Gas Analyzer</a>
-                    
-                    <a href="documents/ql/guide_diaphragm_pump_pu96.txt" target="_blank" class="button-link diagram-button">Guide: Diaphragm Pump PU96</a>
-                    <a href="documents/ql/guide_reaction_chamber_cleaning.txt" target="_blank" class="button-link diagram-button">Guide: Reaction Chamber Cleaning</a>
-                    <a href="documents/ql/guide_t100_uv_lamp.txt" target="_blank" class="button-link diagram-button">Guide: T100 UV Lamp</a>
-                    <a href="documents/ql/guide_t703_leak_check.txt" target="_blank" class="button-link diagram-button">Guide: T703 Leak Check</a>
-                </div>
+                    </div>
             </div>
 
             <div class="chat-container">
@@ -50,23 +29,7 @@
                     <label for="manual-select">ค้นหาใน:</label>
                     <select name="manuals" id="manual-select">
                         <option value="all">คู่มือทั้งหมด</option>
-                        <option value="CEMS_Drawing_QL.pdf">CEMS Drawing QL</option>
-                        <option value="manual_cooler_ecp3000.pdf">Cooler ECP3000</option>
-                        <option value="manual_filter_clf5.pdf">Filter CLF-5</option>
-                        <option value="manual_filter_fp2t.pdf">Filter FP-2T</option>
-                        <option value="manual_flow_meter_vfb65.pdf">Flow Meter VFB-65</option>
-                        <option value="manual_flow_switch_lph125.pdf">Flow Switch LPH125</option>
-                        <option value="manual_heated_line.pdf">Heated Sample Line</option>
-                        <option value="manual_liquid_stop_lb1.pdf">Liquid Stop LB-1</option>
-                        <option value="manual_peristaltic_pump_sr25.pdf">Peristaltic Pump SR25</option>
-                        <option value="manual_peristaltic_pump_sr25_5rpm.pdf">Peristaltic Pump SR25 (5rpm)</option>
-                        <option value="manual_ppd_md_series.pdf">PPD MD-Series Manual</option>
-                        <option value="manual_probe_sp2200.pdf">Probe SP2200</option>
-                        <option value="manual_pump_mp30.pdf">Pump MP30</option>
-                        <option value="msds_h3po4.pdf">MSDS H3PO4</option>
-                        <option value="ZFK7-Zirconia-Oxygen-Analyzer.pdf">ZFK7 Oxygen Analyzer</option>
-                        <option value="ZPA NDIR Type Infrared Gas Analyzer.pdf">ZPA NDIR Gas Analyzer</option>
-                    </select>
+                        </select>
                 </div>
                 <div id="chat-messages" class="chat-messages">
                     <div class="chat-message ai-message">
@@ -83,9 +46,10 @@
             </div>
 
         </div>
-        <a href="index.html?show=ql-options" class="button-back" style="margin-top: 30px;">&larr; ย้อนกลับ</a>
+        <a href="index.html" class="button-back" style="margin-top: 30px;">&larr; ย้อนกลับ</a>
     </main>
     
+    <script src="manuals-loader.js"></script>
     <script src="ai_chat.js"></script>
 </body>
 </html>
