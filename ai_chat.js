@@ -59,7 +59,7 @@ document.addEventListener('DOMContentLoaded', function () {
         showTypingIndicator();
 
         try {
-            const response = await fetch('http://localhost:5500/chat',{
+           const response = await fetch('https://my-ai-analyzer.onrender.com/chat', {
                 method: 'POST',
                 body: formData,
             });
