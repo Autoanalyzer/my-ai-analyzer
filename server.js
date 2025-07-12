@@ -778,13 +778,14 @@ async function startServer() {
   await initializeVectorStore(); 
   
   if (vectorStore) {
-   app.listen(port, '0.0.0.0', () => { // <--- แก้ไขโดยเพิ่ม '0.0.0.0'/* app.listen(port, () => {*/
-      console.log(`✅ Backend server is running on port ${port}`);
-    });
-  } else {
-    console.error('❌ Server startup failed because the vector store could not be initialized.');
-    process.exit(1);
-  }
+  // เริ่มการทำงานของเซิร์ฟเวอร์
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`✅ Backend server is running on port ${port}`);
+  });
+} else {
+  console.error('❌ Server startup failed because the vector store could not be initialized.');
+  process.exit(1);
+}
 }
 
 startServer();
