@@ -90,6 +90,7 @@ const embeddingsModel = new GoogleGenerativeAIEmbeddings({
 });
 
 // --- Vector Store Initialization ---
+// แทนที่ฟังก์ชัน initializeVectorStore เดิมด้วยโค้ดนี้
 async function initializeVectorStore() {
   try {
     console.log(`🔍 Checking for saved vector store at: ${VECTOR_STORE_SAVE_PATH}`);
@@ -102,7 +103,7 @@ async function initializeVectorStore() {
     vectorStore = new MemoryVectorStore(embeddingsModel);
     await vectorStore.addVectors(embeddings, documents);
 
-    console.log('✅ Vector store loaded successfully from disk.');
+    console.log(`✅ Vector store loaded successfully from disk. Total vectors: ${memoryVectors.length}`);
   } catch (error) {
     console.log('📚 Saved vector store not found. Building from scratch...');
     const documentsBasePath = path.join(__dirname, 'documents');
@@ -112,6 +113,10 @@ async function initializeVectorStore() {
         const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
         .filter(d => d.isDirectory())
         .map(d => d.name);
+
+      // เก็บสถานะการ process
+      let processedCount = 0;
+      let totalChunks = 0;
 
       for (const area of areaFolders) {
         const areaPath = path.join(documentsBasePath, area);
@@ -153,31 +158,92 @@ async function initializeVectorStore() {
         chunkOverlap: 200 
       });
       const splitDocs = await textSplitter.splitDocuments(allDocuments);
+      totalChunks = splitDocs.length;
 
       console.log(`🔄 Embedding ${splitDocs.length} document chunks in batches...`);
       const batchSize = 50;
       const delay = 1000;
 
+      // สร้าง vectorStore ใหม่
       vectorStore = new MemoryVectorStore(embeddingsModel);
 
+      // Process แต่ละ batch และเก็บไฟล์ทันที
       for (let i = 0; i < splitDocs.length; i += batchSize) {
         const batch = splitDocs.slice(i, i + batchSize);
-        await vectorStore.addDocuments(batch);
-        const batchNum = Math.floor(i / batchSize) + 1;
-        const totalBatches = Math.ceil(splitDocs.length / batchSize);
-        console.log(`⏳ Processed batch ${batchNum} of ${totalBatches}...`);
         
-        if (i + batchSize < splitDocs.length) {
-          await new Promise(resolve => setTimeout(resolve, delay));
+        try {
+          // Process batch
+          await vectorStore.addDocuments(batch);
+          processedCount += batch.length;
+          
+          const batchNum = Math.floor(i / batchSize) + 1;
+          const totalBatches = Math.ceil(splitDocs.length / batchSize);
+          
+          console.log(`⏳ Processed batch ${batchNum} of ${totalBatches} (${processedCount}/${totalChunks} chunks)`);
+          
+          // 🔥 เก็บไฟล์ทันทีหลัง process แต่ละ batch
+          try {
+            await fs.writeFile(VECTOR_STORE_SAVE_PATH, JSON.stringify(vectorStore.memoryVectors, null, 2));
+            console.log(`💾 Saved progress: ${processedCount}/${totalChunks} chunks to disk`);
+          } catch (saveError) {
+            console.error(`⚠️ Could not save progress after batch ${batchNum}:`, saveError.message);
+            // ไม่ให้ error การเก็บไฟล์หยุดการทำงาน
+          }
+          
+          // รอระหว่าง batch (ยกเว้น batch สุดท้าย)
+          if (i + batchSize < splitDocs.length) {
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+          
+        } catch (batchError) {
+          console.error(`❌ Error processing batch ${batchNum}:`, batchError.message);
+          
+          // เก็บไฟล์ที่ทำได้แล้วก่อน error
+          try {
+            await fs.writeFile(VECTOR_STORE_SAVE_PATH, JSON.stringify(vectorStore.memoryVectors, null, 2));
+            console.log(`💾 Saved partial progress: ${processedCount}/${totalChunks} chunks before error`);
+          } catch (saveError) {
+            console.error(`⚠️ Could not save partial progress:`, saveError.message);
+          }
+          
+          // ถ้าไม่ใช่ batch แรกและมีข้อมูลอยู่แล้ว ให้ใช้ข้อมูลที่มี
+          if (processedCount > 0) {
+            console.log(`🔄 Continuing with ${processedCount} processed chunks...`);
+            break; // ออกจาก loop และใช้ข้อมูลที่มี
+          } else {
+            throw batchError; // ถ้า batch แรกพัง ให้ throw error
+          }
         }
       }
       
-      await fs.writeFile(VECTOR_STORE_SAVE_PATH, JSON.stringify(vectorStore.memoryVectors, null, 2));
-      console.log(`✅ Vector store initialized and saved to: ${VECTOR_STORE_SAVE_PATH}`);
+      console.log(`✅ Vector store initialization completed!`);
+      console.log(`📊 Final stats: ${processedCount}/${totalChunks} chunks processed`);
+      console.log(`💾 Vector store saved to: ${VECTOR_STORE_SAVE_PATH}`);
 
     } catch (buildError) {
       console.error('❌ CRITICAL: Failed to build vector store.', buildError);
-      vectorStore = undefined;
+      
+      // ลองโหลดไฟล์ partial ที่อาจมีอยู่
+      try {
+        console.log('🔄 Attempting to load partial vector store...');
+        const partialData = await fs.readFile(VECTOR_STORE_SAVE_PATH, 'utf-8');
+        const partialVectors = JSON.parse(partialData);
+        
+        if (partialVectors && partialVectors.length > 0) {
+          const documents = partialVectors.map(mv => ({ pageContent: mv.content, metadata: mv.metadata }));
+          const embeddings = partialVectors.map(mv => mv.embedding);
+          
+          vectorStore = new MemoryVectorStore(embeddingsModel);
+          await vectorStore.addVectors(embeddings, documents);
+          
+          console.log(`✅ Loaded partial vector store with ${partialVectors.length} vectors`);
+        } else {
+          vectorStore = undefined;
+        }
+      } catch (partialError) {
+        console.error('❌ Could not load partial vector store either');
+        vectorStore = undefined;
+      }
     }
   }
 }
