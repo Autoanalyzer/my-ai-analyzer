@@ -778,7 +778,7 @@ async function startServer() {
   await initializeVectorStore(); 
   
   if (vectorStore) {
-    app.listen(port, () => {
+   app.listen(port, '0.0.0.0', () => { // <--- แก้ไขโดยเพิ่ม '0.0.0.0'/* app.listen(port, () => {*/
       console.log(`✅ Backend server is running on port ${port}`);
     });
   } else {
