@@ -224,7 +224,7 @@ async function initializeVectorStore() {
                 await vectorStore.addVectors(embeddings, documents);
             }
         }
-        await vectorStore.addDocuments(splitDocs);
+     await vectorStore.addDocuments(splitDocs);
         console.log(`  > Embedded ${splitDocs.length} new chunks.`);
       }
 
