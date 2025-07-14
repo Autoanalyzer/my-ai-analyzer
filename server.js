@@ -37,6 +37,7 @@ const chatHistories = {};
 let vectorStore;
 
 const VECTOR_STORE_SAVE_PATH = path.join(__dirname, 'vector_store.json');
+const PROCESSED_FILES_LOG_PATH = path.join(__dirname, 'processed_files.json'); // <-- เพิ่มบรรทัดนี้
 
 app.use(cors());
 app.use(express.json());
@@ -120,84 +121,128 @@ const embeddingsModel = new GoogleGenerativeAIEmbeddings({
   model: 'text-embedding-004',
 });
 
+// --- วางโค้ดนี้แทนที่ฟังก์ชัน initializeVectorStore() เดิมทั้งหมด ---
+
 async function initializeVectorStore() {
-  try {
-    console.log(`Checking for saved vector store at: ${VECTOR_STORE_SAVE_PATH}`);
-    const savedData = await fs.readFile(VECTOR_STORE_SAVE_PATH, 'utf-8');
-    const memoryVectors = JSON.parse(savedData);
+  console.log('--- Initializing Vector Store (Resumable) ---');
+  try {
+    // --- 1. โหลดข้อมูลเก่า (ถ้ามี) ---
+    let existingVectors = [];
+    let processedFiles = new Set(); // ใช้ Set เพื่อการค้นหาที่รวดเร็ว
 
-    const documents = memoryVectors.map(mv => ({ pageContent: mv.content, metadata: mv.metadata }));
-    const embeddings = memoryVectors.map(mv => mv.embedding);
+    try {
+      const savedData = await fs.readFile(VECTOR_STORE_SAVE_PATH, 'utf-8');
+      existingVectors = JSON.parse(savedData);
+      console.log(`✅ Loaded ${existingVectors.length} existing vectors from disk.`);
+    } catch (e) {
+      console.log('No existing vector store found. Starting fresh.');
+    }
 
-    vectorStore = new MemoryVectorStore(embeddingsModel);
-    await vectorStore.addVectors(embeddings, documents);
+    try {
+      const logData = await fs.readFile(PROCESSED_FILES_LOG_PATH, 'utf-8');
+      JSON.parse(logData).forEach(file => processedFiles.add(file));
+      console.log(`✅ Loaded ${processedFiles.size} processed file records.`);
+    } catch (e) {
+      console.log('No processed file log found.');
+    }
 
-    console.log('✅ Vector store loaded successfully from disk.');
-  } catch (error) {
-    console.log('Saved vector store not found. Building from scratch...');
-    const documentsBasePath = path.join(__dirname, 'documents');
-    const allDocuments = [];
+    // --- 2. สแกนหาไฟล์ทั้งหมด และกรองเฉพาะไฟล์ที่ยังไม่เคยทำ ---
+    const documentsBasePath = path.join(__dirname, 'documents');
+    const allFilePaths = [];
+    const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
+      .filter(d => d.isDirectory()).map(d => d.name);
 
-    try {
-        const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
-        .filter(d => d.isDirectory())
-        .map(d => d.name);
+    for (const area of areaFolders) {
+      const areaPath = path.join(documentsBasePath, area);
+      const files = await fs.readdir(areaPath);
+      for (const file of files) {
+        allFilePaths.push({ path: path.join(areaPath, file), area, name: file });
+      }
+    }
 
-      for (const area of areaFolders) {
-        const areaPath = path.join(documentsBasePath, area);
-        const files = await fs.readdir(areaPath);
-        for (const file of files) {
-          const filePath = path.join(areaPath, file);
-          const fileExt = path.extname(file).toLowerCase();
-          let textContent = null;
+    const filesToProcess = allFilePaths.filter(f => !processedFiles.has(f.name));
 
-          try {
-            if (fileExt === '.pdf') {
-              const dataBuffer = await fs.readFile(filePath);
-              const pdfData = await pdf(dataBuffer);
-              textContent = pdfData.text;
-            } else if (fileExt === '.txt') {
-              textContent = await fs.readFile(filePath, 'utf-8');
-            }
-
-            if (textContent) {
-              allDocuments.push({
-                pageContent: textContent,
-                metadata: { source: file.trim(), area: area.trim() },
-              });
-            }
-          } catch (fileError) {
-            console.error(`Could not process file: ${file}`, fileError);
-          }
-        }
+    if (filesToProcess.length === 0) {
+      console.log('✅ All documents are already processed. Initializing from loaded data.');
+      // ถ้ามีข้อมูลเก่าอยู่แล้ว ให้สร้าง vectorStore จากข้อมูลนั้น
+      if (existingVectors.length > 0) {
+        const documents = existingVectors.map(mv => ({ pageContent: mv.content, metadata: mv.metadata }));
+        const embeddings = existingVectors.map(mv => mv.embedding);
+        vectorStore = new MemoryVectorStore(embeddingsModel);
+        await vectorStore.addVectors(embeddings, documents);
+      } else {
+        // กรณีไม่มีไฟล์ให้ทำและไม่มีข้อมูลเก่าเลย
+        vectorStore = new MemoryVectorStore(embeddingsModel);
       }
+      console.log('--- Vector Store Initialization Complete ---');
+      return;
+    }
 
-      const textSplitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
-      const splitDocs = await textSplitter.splitDocuments(allDocuments);
+    console.log(`🔥 Found ${filesToProcess.length} new files to process.`);
 
-      console.log(`Embedding ${splitDocs.length} document chunks in batches...`);
-      const batchSize = 50;
-      const delay = 1000;
+    // --- 3. เริ่มประมวลผลไฟล์ใหม่เป็นรอบๆ ---
+    const BATCH_SIZE = 50; // ประมวลผลรอบละ 50 ไฟล์
+    const DELAY = 1000;
 
-      vectorStore = new MemoryVectorStore(embeddingsModel);
+    for (let i = 0; i < filesToProcess.length; i += BATCH_SIZE) {
+      const batchOfFiles = filesToProcess.slice(i, i + BATCH_SIZE);
+      console.log(`--- Processing Batch ${Math.floor(i / BATCH_SIZE) + 1} / ${Math.ceil(filesToProcess.length / BATCH_SIZE)} ---`);
+      
+      const newDocuments = [];
+      for (const fileInfo of batchOfFiles) {
+        const fileExt = path.extname(fileInfo.name).toLowerCase();
+        let textContent = '';
+        try {
+          if (fileExt === '.pdf') {
+            const dataBuffer = await fs.readFile(fileInfo.path);
+            textContent = (await pdf(dataBuffer)).text;
+          } else if (fileExt === '.txt') {
+            textContent = await fs.readFile(fileInfo.path, 'utf-8');
+          }
 
-      for (let i = 0; i < splitDocs.length; i += batchSize) {
-        const batch = splitDocs.slice(i, i + batchSize);
-        await vectorStore.addDocuments(batch);
-        console.log(`Processed batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(splitDocs.length / batchSize)}...`);
-        if (i + batchSize < splitDocs.length) {
-          await new Promise(resolve => setTimeout(resolve, delay));
+          if (textContent) {
+            newDocuments.push({
+              pageContent: textContent,
+              metadata: { source: fileInfo.name.trim(), area: fileInfo.area.trim() },
+            });
+          }
+        } catch (fileError) {
+          console.error(`Could not process file: ${fileInfo.name}`, fileError);
+        }
+      }
+
+      if(newDocuments.length > 0) {
+        const textSplitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
+        const splitDocs = await textSplitter.splitDocuments(newDocuments);
+
+        // สร้าง vectorStore ใหม่ถ้ายังไม่มี หรือใช้ตัวที่มีอยู่แล้ว
+        if (!vectorStore) {
+            vectorStore = new MemoryVectorStore(embeddingsModel);
+            if(existingVectors.length > 0) {
+                const documents = existingVectors.map(mv => ({ pageContent: mv.content, metadata: mv.metadata }));
+                const embeddings = existingVectors.map(mv => mv.embedding);
+                await vectorStore.addVectors(embeddings, documents);
+            }
         }
-      }
-      
-      await fs.writeFile(VECTOR_STORE_SAVE_PATH, JSON.stringify(vectorStore.memoryVectors, null, 2));
-      console.log(`✅ Global vector store initialized and saved to disk at: ${VECTOR_STORE_SAVE_PATH}`);
+        await vectorStore.addDocuments(splitDocs);
+        console.log(`  > Embedded ${splitDocs.length} new chunks.`);
+      }
 
-    } catch (buildError) {
-      console.error('CRITICAL: Failed to build vector store.', buildError);
-      vectorStore = undefined;
-    }
-  }
+      // --- 4. บันทึกความคืบหน้า ---
+      batchOfFiles.forEach(f => processedFiles.add(f.name));
+      await fs.writeFile(VECTOR_STORE_SAVE_PATH, JSON.stringify(vectorStore.memoryVectors, null, 2));
+      await fs.writeFile(PROCESSED_FILES_LOG_PATH, JSON.stringify(Array.from(processedFiles), null, 2));
+
+      console.log(`💾 Progress saved! Total processed files: ${processedFiles.size}`);
+      await new Promise(resolve => setTimeout(resolve, DELAY)); // หน่วงเวลาก่อนทำรอบต่อไป
+    }
+    
+    console.log('--- Vector Store Initialization Complete ---');
+
+  } catch (buildError) {
+    console.error('CRITICAL: Failed to build vector store.', buildError);
+    vectorStore = undefined;
+  }
 }
 
 app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
@@ -779,7 +824,7 @@ async function startServer() {
   
   if (vectorStore) {
   // เริ่มการทำงานของเซิร์ฟเวอร์
-  app.listen(port, '0.0.0.0', () => {
+  app.listen(port,  () => {
     console.log(`✅ Backend server is running on port ${port}`);
   });
 } else {
