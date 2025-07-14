@@ -1,2 +1,4 @@
 /node_modules
 .env
+# ไฟล์ที่สร้างขึ้นอัตโนมัติ ไม่ต้องเก็บใน Git
+/vector_store.json
