@@ -1,3 +1,28 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:a3cace37bac9d192a488b928dd34d349ab71caf3bed742a8d2a964b1d474d0e2
-size 640
+{
+  "name": "my-ai-analyzer",
+  "version": "1.0.0",
+  "description": "My AI Analyzer Application",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/generative-ai": "^0.3.1",
+    "@langchain/community": "^0.0.47",
+    "@langchain/core": "^0.1.61",
+    "@langchain/google-genai": "^0.0.14",
+    "body-parser": "^2.2.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-session": "^1.18.1",
+    "langchain": "^0.1.29",
+    "multer": "^2.0.1",
+    "pdf-parse": "^1.1.1"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}
