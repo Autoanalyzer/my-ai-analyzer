@@ -120,87 +120,118 @@ const embeddingsModel = new GoogleGenerativeAIEmbeddings({
   model: 'text-embedding-004',
 });
 
+// เพิ่มการ import axios ไว้ด้านบนของไฟล์
+const axios = require('axios'); 
+
+// ให้นำฟังก์ชันนี้ไปวางแทนที่ฟังก์ชัน initializeVectorStore ของเดิมทั้งหมด
 async function initializeVectorStore() {
-  try {
-    console.log(`Checking for saved vector store at: ${VECTOR_STORE_SAVE_PATH}`);
-    const savedData = await fs.readFile(VECTOR_STORE_SAVE_PATH, 'utf-8');
-    const memoryVectors = JSON.parse(savedData);
+    const VECTOR_STORE_URL = process.env.VECTOR_STORE_URL;
+    const VECTOR_STORE_SAVE_PATH = path.join(__dirname, 'vector_store.json');
 
-    const documents = memoryVectors.map(mv => ({ pageContent: mv.content, metadata: mv.metadata }));
-    const embeddings = memoryVectors.map(mv => mv.embedding);
-
-    vectorStore = new MemoryVectorStore(embeddingsModel);
-    await vectorStore.addVectors(embeddings, documents);
-
-    console.log('✅ Vector store loaded successfully from disk.');
-  } catch (error) {
-    console.log('Saved vector store not found. Building from scratch...');
-    const documentsBasePath = path.join(__dirname, 'documents');
-    const allDocuments = [];
-
-    try {
-        const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
-        .filter(d => d.isDirectory())
-        .map(d => d.name);
-
-     // นำโค้ดนี้ไปวางแทนที่ loop เก่า
-for (const area of areaFolders) {
-    const areaPath = path.join(documentsBasePath, area);
-    const files = await fs.readdir(areaPath);
-    for (const file of files) {
-        const filePath = path.join(areaPath, file);
-        const fileExt = path.extname(file).toLowerCase();
-        let docsFromFile = [];
-
+    // กรณีที่ 1: Deploy บน Render (มี Environment Variable)
+    if (VECTOR_STORE_URL) {
+        console.log('🚀 Production environment detected. Downloading vector store from cloud...');
         try {
-            if (fileExt === '.pdf') {
-                // ✨ ใช้ PDFLoader ที่สามารถดึงเลขหน้าได้
-                const loader = new PDFLoader(filePath);
-                docsFromFile = await loader.load();
-            } else if (fileExt === '.txt') {
-                // การอ่านไฟล์ .txt ยังเหมือนเดิม แต่สร้างเป็น Document object
-                const textContent = await fs.readFile(filePath, 'utf-8');
-                docsFromFile.push({ pageContent: textContent, metadata: {} });
-            }
-
-            // เพิ่ม metadata ให้กับทุกหน้าที่ดึงมาได้
-            docsFromFile.forEach(doc => {
-                doc.metadata.source = file.trim();
-                doc.metadata.area = area.trim();
+            const response = await axios({
+                method: 'get',
+                url: VECTOR_STORE_URL,
+                responseType: 'stream',
             });
-            allDocuments.push(...docsFromFile);
 
-        } catch (fileError) {
-            console.error(`Could not process file: ${file}`, fileError);
+            const writer = fs.createWriteStream(VECTOR_STORE_SAVE_PATH);
+            response.data.pipe(writer);
+
+            await new Promise((resolve, reject) => {
+                writer.on('finish', resolve);
+                writer.on('error', reject);
+            });
+            
+            console.log('✅ Vector store downloaded successfully. Loading into memory...');
+            
+            // โหลดไฟล์ที่ดาวน์โหลดมาแล้วเข้าสู่ VectorStore
+            const savedData = await fs.readFile(VECTOR_STORE_SAVE_PATH, 'utf-8');
+            const memoryVectors = JSON.parse(savedData);
+            const documents = memoryVectors.map(mv => ({ pageContent: mv.content, metadata: mv.metadata }));
+            const embeddings = memoryVectors.map(mv => mv.embedding);
+
+            vectorStore = new MemoryVectorStore(embeddingsModel);
+            await vectorStore.addVectors(embeddings, documents);
+            console.log('✅ Vector store loaded successfully from downloaded file.');
+
+        } catch (error) {
+            console.error('❌ CRITICAL: Failed to download or load vector store from cloud.', error);
+            vectorStore = undefined; // ตั้งค่าเป็น undefined เพื่อให้เซิร์ฟเวอร์ไม่เริ่มทำงาน
+        }
+    
+    // กรณีที่ 2: รันบนเครื่องตัวเอง (ไม่มี Environment Variable)
+    } else {
+        console.log('💻 Local environment detected. Trying to load from local disk...');
+        try {
+            // โค้ดส่วนนี้จะเหมือนของเดิม คือพยายามอ่านไฟล์ ถ้าไม่เจอก็จะสร้างใหม่
+            console.log(`Checking for saved vector store at: ${VECTOR_STORE_SAVE_PATH}`);
+            const savedData = await fs.readFile(VECTOR_STORE_SAVE_PATH, 'utf-8');
+            const memoryVectors = JSON.parse(savedData);
+            const documents = memoryVectors.map(mv => ({ pageContent: mv.content, metadata: mv.metadata }));
+            const embeddings = memoryVectors.map(mv => mv.embedding);
+
+            vectorStore = new MemoryVectorStore(embeddingsModel);
+            await vectorStore.addVectors(embeddings, documents);
+
+            console.log('✅ Vector store loaded successfully from local disk.');
+
+        } catch (error) {
+            console.log('📝 Saved vector store not found locally. Building from scratch...');
+            const documentsBasePath = path.join(__dirname, 'documents');
+            const allDocuments = [];
+
+            try {
+                const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
+                    .filter(d => d.isDirectory())
+                    .map(d => d.name);
+
+                for (const area of areaFolders) {
+                    const areaPath = path.join(documentsBasePath, area);
+                    const files = await fs.readdir(areaPath);
+                    for (const file of files) {
+                        const filePath = path.join(areaPath, file);
+                        const fileExt = path.extname(file).toLowerCase();
+                        let docsFromFile = [];
+
+                        try {
+                            if (fileExt === '.pdf') {
+                                const loader = new PDFLoader(filePath);
+                                docsFromFile = await loader.load();
+                            } else if (fileExt === '.txt') {
+                                const textContent = await fs.readFile(filePath, 'utf-8');
+                                docsFromFile.push({ pageContent: textContent, metadata: {} });
+                            }
+
+                            docsFromFile.forEach(doc => {
+                                doc.metadata.source = file.trim();
+                                doc.metadata.area = area.trim();
+                            });
+                            allDocuments.push(...docsFromFile);
+                        } catch (fileError) {
+                            console.error(`Could not process file: ${file}`, fileError);
+                        }
+                    }
+                }
+                
+                const textSplitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
+                const splitDocs = await textSplitter.splitDocuments(allDocuments);
+
+                vectorStore = new MemoryVectorStore(embeddingsModel);
+                await vectorStore.addDocuments(splitDocs);
+
+                await fs.writeFile(VECTOR_STORE_SAVE_PATH, JSON.stringify(vectorStore.memoryVectors, null, 2));
+                console.log(`✅ Local vector store initialized and saved to disk at: ${VECTOR_STORE_SAVE_PATH}`);
+
+            } catch (buildError) {
+                console.error('❌ CRITICAL: Failed to build vector store.', buildError);
+                vectorStore = undefined;
+            }
         }
     }
-}
-      const textSplitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
-      const splitDocs = await textSplitter.splitDocuments(allDocuments);
-
-      console.log(`Embedding ${splitDocs.length} document chunks in batches...`);
-      const batchSize = 50;
-      const delay = 1000;
-
-      vectorStore = new MemoryVectorStore(embeddingsModel);
-
-      for (let i = 0; i < splitDocs.length; i += batchSize) {
-        const batch = splitDocs.slice(i, i + batchSize);
-        await vectorStore.addDocuments(batch);
-        console.log(`Processed batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(splitDocs.length / batchSize)}...`);
-        if (i + batchSize < splitDocs.length) {
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-      
-      await fs.writeFile(VECTOR_STORE_SAVE_PATH, JSON.stringify(vectorStore.memoryVectors, null, 2));
-      console.log(`✅ Global vector store initialized and saved to disk at: ${VECTOR_STORE_SAVE_PATH}`);
-
-    } catch (buildError) {
-      console.error('CRITICAL: Failed to build vector store.', buildError);
-      vectorStore = undefined;
-    }
-  }
 }
 
 // ให้นำโค้ดนี้ไปวางแทนที่ app.post('/chat', ...) ทั้งหมด
