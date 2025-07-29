@@ -13,6 +13,7 @@
     "@langchain/community": "^0.0.47",
     "@langchain/core": "^0.1.61",
     "@langchain/google-genai": "^0.0.14",
+    "@pinecone-database/pinecone": "^6.1.2",
     "axios": "^1.11.0",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",

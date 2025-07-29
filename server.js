@@ -5,7 +5,6 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs/promises');
-const fsSync = require('fs')
 const pdf = require('pdf-parse');
 const path = require('path');
 const session = require('express-session');
@@ -15,10 +14,11 @@ const {
   HarmCategory,
   HarmBlockThreshold,
 } = require('@google/generative-ai');
-const { GoogleGenerativeAIEmbeddings } = require('@langchain/google-genai');
-const { MemoryVectorStore } = require('langchain/vectorstores/memory');
-const { RecursiveCharacterTextSplitter } = require('langchain/text_splitter');
-const { PDFLoader } = require('langchain/document_loaders/fs/pdf');
+const { Pinecone } = require('@pinecone-database/pinecone');
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
+
+// ลบ MemoryVectorStore, RecursiveCharacterTextSplitter, PDFLoader ออก
+// เพราะเราไม่ต้องสร้าง Vector Store เองใน Server อีกต่อไป
 const app = express();
 const port = process.env.PORT || 5500;
 // --- 2. ตั้งค่า User และ Session ---
@@ -35,205 +35,105 @@ app.use(session({
 }));
 
 const chatHistories = {};
-let vectorStore;
 
-const VECTOR_STORE_SAVE_PATH = path.join(__dirname, 'vector_store.json');
+// ... (โค้ด app.use ต่างๆ) ...
 
-app.use(cors());
-app.use(express.json());
-// ... (โค้ด app.use(cors), app.use(express.json) ของคุณ)
-app.use((req, res, next) => {
-    console.log(`[DEBUG] Incoming Request: ${req.method} ${req.originalUrl}`);
-    next();
-});
-// --- 1. เพิ่ม Middleware สำหรับตรวจสอบการ Login ---
-const checkAuth = (req, res, next) => {
-    console.log('[DEBUG] --- Running checkAuth ---');
-    console.log('[DEBUG] Session ID:', req.session.id);
-    console.log('[DEBUG] req.session.userId is:', req.session.userId);
-
-    if (!req.session.userId) {
-        console.log('[DEBUG] Condition is TRUE. Redirecting to /login.html');
-        return res.redirect('/login.html');
-    }
-    
-    console.log('[DEBUG] Condition is FALSE. User is authenticated. Allowing access.');
-    next();
-};
-// ... (โค้ด checkAuth จากขั้นตอนที่ 1)
-
-// --- 2. สร้าง Endpoint สำหรับ Login และ Logout ---
-app.post('/login', (req, res) => {
-    const { username, password } = req.body;
-    const user = users.find(u => u.username === username && u.password === password);
-
-    if (user) {
-        req.session.userId = user.id;
-        req.session.username = user.username;
-        return res.json({ message: 'Login successful' });
-    }
-
-    return res.status(401).json({ error: 'Invalid username or password' });
-});
-
-app.get('/logout', (req, res) => {
-    req.session.destroy(err => {
-        if (err) {
-            return res.redirect('/index.html');
-        }
-        res.clearCookie('connect.sid');
-        res.redirect('/login.html');
-    });
-});
-app.get('/', checkAuth, (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-app.get('/index.html', checkAuth, (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-app.get('/details.html', checkAuth, (req, res) => {
-    res.sendFile(path.join(__dirname, 'details.html'));
-});
-
-app.get('/manuals.html', checkAuth, (req, res) => {
-    res.sendFile(path.join(__dirname, 'manuals.html'));
-});
-app.use(express.static(__dirname));
-
-const upload = multer({ storage: multer.memoryStorage() });
-
+// --- ตั้งค่า AI และ Pinecone Client ---
 const safetySettings = [
-  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
-
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const generativeModel = genAI.getGenerativeModel({
-  model: 'gemini-2.0-flash',
-  safetySettings,
-});
-const embeddingsModel = new GoogleGenerativeAIEmbeddings({
-  apiKey: process.env.GEMINI_API_KEY,
-  model: 'text-embedding-004',
-});
+const generativeModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash', safetySettings });
+const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
 
-// เพิ่มการ import axios ไว้ด้านบนของไฟล์
-const axios = require('axios'); 
+const pc = new Pinecone();
+const pineconeIndex = pc.index(process.env.PINECONE_INDEX_NAME);
+console.log('✅ Connected to Pinecone index successfully.');
 
-// ให้นำฟังก์ชันนี้ไปวางแทนที่ฟังก์ชัน initializeVectorStore ของเดิมทั้งหมด
 async function initializeVectorStore() {
-    const VECTOR_STORE_URL = process.env.VECTOR_STORE_URL;
-    const VECTOR_STORE_SAVE_PATH = path.join(__dirname, 'vector_store.json');
+  try {
+    console.log(`Checking for saved vector store at: ${VECTOR_STORE_SAVE_PATH}`);
+    const savedData = await fs.readFile(VECTOR_STORE_SAVE_PATH, 'utf-8');
+    const memoryVectors = JSON.parse(savedData);
 
-    // กรณีที่ 1: Deploy บน Render (มี Environment Variable)
-    if (VECTOR_STORE_URL) {
-        console.log('🚀 Production environment detected. Downloading vector store from cloud...');
+    const documents = memoryVectors.map(mv => ({ pageContent: mv.content, metadata: mv.metadata }));
+    const embeddings = memoryVectors.map(mv => mv.embedding);
+
+    vectorStore = new MemoryVectorStore(embeddingsModel);
+    await vectorStore.addVectors(embeddings, documents);
+
+    console.log('✅ Vector store loaded successfully from disk.');
+  } catch (error) {
+    console.log('Saved vector store not found. Building from scratch...');
+    const documentsBasePath = path.join(__dirname, 'documents');
+    const allDocuments = [];
+
+    try {
+        const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
+        .filter(d => d.isDirectory())
+        .map(d => d.name);
+
+     // นำโค้ดนี้ไปวางแทนที่ loop เก่า
+for (const area of areaFolders) {
+    const areaPath = path.join(documentsBasePath, area);
+    const files = await fs.readdir(areaPath);
+    for (const file of files) {
+        const filePath = path.join(areaPath, file);
+        const fileExt = path.extname(file).toLowerCase();
+        let docsFromFile = [];
+
         try {
-            const response = await axios({
-                method: 'get',
-                url: VECTOR_STORE_URL,
-                responseType: 'stream',
-            });
-
-            // บรรทัดใหม่
-const writer = fsSync.createWriteStream(VECTOR_STORE_SAVE_PATH);
-            response.data.pipe(writer);
-
-            await new Promise((resolve, reject) => {
-                writer.on('finish', resolve);
-                writer.on('error', reject);
-            });
-            
-            console.log('✅ Vector store downloaded successfully. Loading into memory...');
-            
-            // โหลดไฟล์ที่ดาวน์โหลดมาแล้วเข้าสู่ VectorStore
-            const savedData = await fs.readFile(VECTOR_STORE_SAVE_PATH, 'utf-8');
-            const memoryVectors = JSON.parse(savedData);
-            const documents = memoryVectors.map(mv => ({ pageContent: mv.content, metadata: mv.metadata }));
-            const embeddings = memoryVectors.map(mv => mv.embedding);
-
-            vectorStore = new MemoryVectorStore(embeddingsModel);
-            await vectorStore.addVectors(embeddings, documents);
-            console.log('✅ Vector store loaded successfully from downloaded file.');
-
-        } catch (error) {
-            console.error('❌ CRITICAL: Failed to download or load vector store from cloud.', error);
-            vectorStore = undefined; // ตั้งค่าเป็น undefined เพื่อให้เซิร์ฟเวอร์ไม่เริ่มทำงาน
-        }
-    
-    // กรณีที่ 2: รันบนเครื่องตัวเอง (ไม่มี Environment Variable)
-    } else {
-        console.log('💻 Local environment detected. Trying to load from local disk...');
-        try {
-            // โค้ดส่วนนี้จะเหมือนของเดิม คือพยายามอ่านไฟล์ ถ้าไม่เจอก็จะสร้างใหม่
-            console.log(`Checking for saved vector store at: ${VECTOR_STORE_SAVE_PATH}`);
-            const savedData = await fs.readFile(VECTOR_STORE_SAVE_PATH, 'utf-8');
-            const memoryVectors = JSON.parse(savedData);
-            const documents = memoryVectors.map(mv => ({ pageContent: mv.content, metadata: mv.metadata }));
-            const embeddings = memoryVectors.map(mv => mv.embedding);
-
-            vectorStore = new MemoryVectorStore(embeddingsModel);
-            await vectorStore.addVectors(embeddings, documents);
-
-            console.log('✅ Vector store loaded successfully from local disk.');
-
-        } catch (error) {
-            console.log('📝 Saved vector store not found locally. Building from scratch...');
-            const documentsBasePath = path.join(__dirname, 'documents');
-            const allDocuments = [];
-
-            try {
-                const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
-                    .filter(d => d.isDirectory())
-                    .map(d => d.name);
-
-                for (const area of areaFolders) {
-                    const areaPath = path.join(documentsBasePath, area);
-                    const files = await fs.readdir(areaPath);
-                    for (const file of files) {
-                        const filePath = path.join(areaPath, file);
-                        const fileExt = path.extname(file).toLowerCase();
-                        let docsFromFile = [];
-
-                        try {
-                            if (fileExt === '.pdf') {
-                                const loader = new PDFLoader(filePath);
-                                docsFromFile = await loader.load();
-                            } else if (fileExt === '.txt') {
-                                const textContent = await fs.readFile(filePath, 'utf-8');
-                                docsFromFile.push({ pageContent: textContent, metadata: {} });
-                            }
-
-                            docsFromFile.forEach(doc => {
-                                doc.metadata.source = file.trim();
-                                doc.metadata.area = area.trim();
-                            });
-                            allDocuments.push(...docsFromFile);
-                        } catch (fileError) {
-                            console.error(`Could not process file: ${file}`, fileError);
-                        }
-                    }
-                }
-                
-                const textSplitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
-                const splitDocs = await textSplitter.splitDocuments(allDocuments);
-
-                vectorStore = new MemoryVectorStore(embeddingsModel);
-                await vectorStore.addDocuments(splitDocs);
-
-                await fs.writeFile(VECTOR_STORE_SAVE_PATH, JSON.stringify(vectorStore.memoryVectors, null, 2));
-                console.log(`✅ Local vector store initialized and saved to disk at: ${VECTOR_STORE_SAVE_PATH}`);
-
-            } catch (buildError) {
-                console.error('❌ CRITICAL: Failed to build vector store.', buildError);
-                vectorStore = undefined;
+            if (fileExt === '.pdf') {
+                // ✨ ใช้ PDFLoader ที่สามารถดึงเลขหน้าได้
+                const loader = new PDFLoader(filePath);
+                docsFromFile = await loader.load();
+            } else if (fileExt === '.txt') {
+                // การอ่านไฟล์ .txt ยังเหมือนเดิม แต่สร้างเป็น Document object
+                const textContent = await fs.readFile(filePath, 'utf-8');
+                docsFromFile.push({ pageContent: textContent, metadata: {} });
             }
+
+            // เพิ่ม metadata ให้กับทุกหน้าที่ดึงมาได้
+            docsFromFile.forEach(doc => {
+                doc.metadata.source = file.trim();
+                doc.metadata.area = area.trim();
+            });
+            allDocuments.push(...docsFromFile);
+
+        } catch (fileError) {
+            console.error(`Could not process file: ${file}`, fileError);
         }
     }
+}
+      const textSplitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
+      const splitDocs = await textSplitter.splitDocuments(allDocuments);
+
+      console.log(`Embedding ${splitDocs.length} document chunks in batches...`);
+      const batchSize = 50;
+      const delay = 1000;
+
+      vectorStore = new MemoryVectorStore(embeddingsModel);
+
+      for (let i = 0; i < splitDocs.length; i += batchSize) {
+        const batch = splitDocs.slice(i, i + batchSize);
+        await vectorStore.addDocuments(batch);
+        console.log(`Processed batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(splitDocs.length / batchSize)}...`);
+        if (i + batchSize < splitDocs.length) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+      
+      await fs.writeFile(VECTOR_STORE_SAVE_PATH, JSON.stringify(vectorStore.memoryVectors, null, 2));
+      console.log(`✅ Global vector store initialized and saved to disk at: ${VECTOR_STORE_SAVE_PATH}`);
+
+    } catch (buildError) {
+      console.error('CRITICAL: Failed to build vector store.', buildError);
+      vectorStore = undefined;
+    }
+  }
 }
 
 // ให้นำโค้ดนี้ไปวางแทนที่ app.post('/chat', ...) ทั้งหมด
@@ -255,18 +155,25 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
             return res.status(400).json({ error: 'Question is required.' });
         }
 
-        if (!vectorStore) {
-            return res.status(503).json({ error: 'AI knowledge base is not ready. Please wait.' });
-        }
+        // ไม่ต้องเช็ค !vectorStore อีกต่อไป
 
-        let filter;
-        if (manual && manual !== 'all') {
-            filter = (doc) => doc.metadata.source === manual.trim();
-        } else if (area) {
-            filter = (doc) => doc.metadata.area === area.trim();
-        }
+// 1. แปลงคำถามเป็น Vector
+const embeddingResult = await embeddingModel.embedContent(question);
+const queryVector = embeddingResult.embedding.values;
 
-        const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
+// 2. สร้าง filter ตาม Syntax ของ Pinecone (แบบ Object)
+let pineconeFilter = { area: { '$eq': area.trim() } };
+
+// 3. ส่ง Vector และ Filter ไปค้นหาที่ Pinecone
+const queryResult = await pineconeIndex.query({
+    vector: queryVector,
+    topK: 5,
+    filter: pineconeFilter,
+    includeMetadata: true,
+});
+
+// 4. ดึงข้อมูลจากผลลัพธ์
+const relevantDocs = queryResult.matches || [];
 
        const context = relevantDocs
     .map((doc) => {
@@ -936,18 +843,6 @@ app.get('/api/manuals', checkAuth, async (req, res) => {
 
 // นำโค้ดนี้ไปวางแทนที่ของเก่า
 
-async function startServer() {
-  await initializeVectorStore(); 
-  
-  if (vectorStore) {
-  // เริ่มการทำงานของเซิร์ฟเวอร์
-  app.listen(port,  () => {
-    console.log(`✅ Backend server is running on port ${port}`);
-  });
-} else {
-  console.error('❌ Server startup failed because the vector store could not be initialized.');
-  process.exit(1);
-}
-}
-
-startServer();
+app.listen(port, () => {
+    console.log(`✅ Backend server is now running on port ${port} and connected to Pinecone.`);
+});
