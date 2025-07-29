@@ -5,6 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs/promises');
+const fsSync = require('fs')
 const pdf = require('pdf-parse');
 const path = require('path');
 const session = require('express-session');
@@ -138,7 +139,8 @@ async function initializeVectorStore() {
                 responseType: 'stream',
             });
 
-            const writer = fs.createWriteStream(VECTOR_STORE_SAVE_PATH);
+            // บรรทัดใหม่
+const writer = fsSync.createWriteStream(VECTOR_STORE_SAVE_PATH);
             response.data.pipe(writer);
 
             await new Promise((resolve, reject) => {
