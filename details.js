@@ -42,9 +42,25 @@ window.onload = function() {
                     const items = aiData.checklist.split('\n');
                     items.forEach(item => {
                         if (item.trim().match(/^\d+\./) || item.trim().startsWith('-')) {
-                            const li = document.createElement('li');
-                            li.textContent = item.trim().replace(/^\d+\.\s*|-s*/, '').trim();
-                            checklistElement.appendChild(li);
+                            // ... (อยู่ภายใน forEach loop)
+const li = document.createElement('li');
+
+// 1. นำข้อความที่ยังไม่ตัด marker (เช่น '1.' หรือ '-') ออก มาเตรียมไว้
+let rawItemText = item.trim();
+
+// 2. สร้าง Regular Expression เพื่อค้นหา Markdown Link เช่น [text](url)
+const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+
+// 3. แปลง Markdown Link ที่พบในข้อความให้เป็น HTML Tag <a>
+// และใส่ target="_blank" เพื่อให้ลิงก์เปิดในแท็บใหม่
+const itemWithHtmlLink = rawItemText.replace(markdownLinkRegex, '<a href="$2" target="_blank">$1</a>');
+
+// 4. ใช้ innerHTML เพื่อแสดงผล HTML ที่เราเพิ่งสร้างขึ้น
+// พร้อมกับตัด list marker ออกในตอนท้าย
+li.innerHTML = itemWithHtmlLink.replace(/^\d+\.\s*|-\s*/, '').trim();
+
+checklistElement.appendChild(li);
+// ...
                         }
                     });
                 } else {

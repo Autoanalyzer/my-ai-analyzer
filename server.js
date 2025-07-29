@@ -17,7 +17,7 @@ const {
 const { GoogleGenerativeAIEmbeddings } = require('@langchain/google-genai');
 const { MemoryVectorStore } = require('langchain/vectorstores/memory');
 const { RecursiveCharacterTextSplitter } = require('langchain/text_splitter');
-
+const { PDFLoader } = require('langchain/document_loaders/fs/pdf');
 const app = express();
 const port = process.env.PORT || 5500;
 // --- 2. ตั้งค่า User และ Session ---
@@ -143,35 +143,38 @@ async function initializeVectorStore() {
         .filter(d => d.isDirectory())
         .map(d => d.name);
 
-      for (const area of areaFolders) {
-        const areaPath = path.join(documentsBasePath, area);
-        const files = await fs.readdir(areaPath);
-        for (const file of files) {
-          const filePath = path.join(areaPath, file);
-          const fileExt = path.extname(file).toLowerCase();
-          let textContent = null;
+     // นำโค้ดนี้ไปวางแทนที่ loop เก่า
+for (const area of areaFolders) {
+    const areaPath = path.join(documentsBasePath, area);
+    const files = await fs.readdir(areaPath);
+    for (const file of files) {
+        const filePath = path.join(areaPath, file);
+        const fileExt = path.extname(file).toLowerCase();
+        let docsFromFile = [];
 
-          try {
+        try {
             if (fileExt === '.pdf') {
-              const dataBuffer = await fs.readFile(filePath);
-              const pdfData = await pdf(dataBuffer);
-              textContent = pdfData.text;
+                // ✨ ใช้ PDFLoader ที่สามารถดึงเลขหน้าได้
+                const loader = new PDFLoader(filePath);
+                docsFromFile = await loader.load();
             } else if (fileExt === '.txt') {
-              textContent = await fs.readFile(filePath, 'utf-8');
+                // การอ่านไฟล์ .txt ยังเหมือนเดิม แต่สร้างเป็น Document object
+                const textContent = await fs.readFile(filePath, 'utf-8');
+                docsFromFile.push({ pageContent: textContent, metadata: {} });
             }
 
-            if (textContent) {
-              allDocuments.push({
-                pageContent: textContent,
-                metadata: { source: file.trim(), area: area.trim() },
-              });
-            }
-          } catch (fileError) {
+            // เพิ่ม metadata ให้กับทุกหน้าที่ดึงมาได้
+            docsFromFile.forEach(doc => {
+                doc.metadata.source = file.trim();
+                doc.metadata.area = area.trim();
+            });
+            allDocuments.push(...docsFromFile);
+
+        } catch (fileError) {
             console.error(`Could not process file: ${file}`, fileError);
-          }
         }
-      }
-
+    }
+}
       const textSplitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
       const splitDocs = await textSplitter.splitDocuments(allDocuments);
 
@@ -200,575 +203,701 @@ async function initializeVectorStore() {
   }
 }
 
+// ให้นำโค้ดนี้ไปวางแทนที่ app.post('/chat', ...) ทั้งหมด
 app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
-  try {
-    let { sessionId, question, manual, area } = req.body;
-    const imageFile = req.file;
+    try {
+        let { sessionId, question, manual, area } = req.body;
+        const imageFile = req.file;
 
-     if (!sessionId) {
-      sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      chatHistories[sessionId] = [];
-    }
-    if (!chatHistories[sessionId]) {
-      chatHistories[sessionId] = [];
-    }
-    const history = chatHistories[sessionId];
+        if (!sessionId) {
+            sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+            chatHistories[sessionId] = [];
+        }
+        if (!chatHistories[sessionId]) {
+            chatHistories[sessionId] = [];
+        }
+        const history = chatHistories[sessionId];
 
-    if (!question) {
-      return res.status(400).json({ error: 'Question is required.' });
-    }
-    
-    if (!vectorStore) {
-        return res.status(503).json({ error: 'AI knowledge base is not ready. Please wait for the server to finish starting up.' });
-    }
+        if (!question) {
+            return res.status(400).json({ error: 'Question is required.' });
+        }
 
-    // ✨ Logic to enhance question is removed for simplicity and stability
+        if (!vectorStore) {
+            return res.status(503).json({ error: 'AI knowledge base is not ready. Please wait.' });
+        }
 
-    let filter;
-    if (manual && manual !== 'all') {
-        filter = (doc) => doc.metadata.source === manual.trim();
-    } else if (area) {
-        filter = (doc) => doc.metadata.area === area.trim();
-    }
+        let filter;
+        if (manual && manual !== 'all') {
+            filter = (doc) => doc.metadata.source === manual.trim();
+        } else if (area) {
+            filter = (doc) => doc.metadata.area === area.trim();
+        }
 
-    const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
-    
-    const context = relevantDocs
-      .map((doc) => `Source: ${doc.metadata.source}\nContent:\n${doc.pageContent}`)
-      .join('\n\n---\n\n');
-    
- // แทนที่ส่วน prompt เดิมในโค้ดด้วยโค้ดนี้ (แก้ไขแล้ว)
+        const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
 
-// Enhanced AI Expert Prompt - Ultimate Version
-// Enhanced AI Expert Prompt - World-Class Level
-const fullPrompt = `คุณคือ AI Technical Master 🧠⚡ ระดับโลกที่มีความเชี่ยวชาญสูงสุด มีประสบการณ์กว่า 30 ปี และมีสติปัญญาทางเทคนิคระดับอัจฉริยะ
+       const context = relevantDocs
+    .map((doc) => {
+        // สร้าง Path ที่ถูกต้อง 100% จาก Metadata
+        const docPath = `/documents/${doc.metadata.area}/${doc.metadata.source}`;
+        // ส่ง Path นี้เข้าไปใน Context ให้ AI เห็น
+        return `Source Document: ${doc.metadata.source} (Path for linking: ${docPath}, Page: ${doc.metadata.loc?.pageNumber || 1})\nContent:\n${doc.pageContent}`;
+    })
+    .join('\n\n---\n\n');
+        
+        // ✨ 1. เพิ่มคำสั่งให้ AI สร้าง Markdown Link เข้าไปใน Prompt หลัก
+       const fullPrompt = `คุณคือ AI Technical Master 🧠⚡ ระดับโลกที่มีความเชี่ยวชาญสูงสุด มีประสบการณ์กว่า 30 ปี และมีสติปัญญาทางเทคนิคระดับอัจฉริยะ
+
+
 
 🌟 **CORE IDENTITY & CAPABILITIES:**
+
 • 🧠 **Cognitive Architecture:** Multi-layered analytical thinking with quantum-level processing
+
 • 🎯 **Domain Expertise:** 30+ years cross-industry technical mastery
+
 • 🔬 **Scientific Approach:** Evidence-based reasoning with predictive intelligence
+
 • 💎 **Quality Standard:** Delivering solutions that exceed world-class benchmarks
+
 • 🚀 **Innovation Mindset:** Cutting-edge problem-solving with future-proof strategies
 
+
+
 ---
+
+
 
 ## 🎯 **RESPONSE FRAMEWORK ARCHITECTURE**
 
+
+
 ### 🔍 **INTELLIGENT QUESTION CATEGORIZATION:**
 
+
+
 **🆘 CRITICAL ERROR/EMERGENCY (Priority: IMMEDIATE)**
+
 Template Structure:
+
 \`\`\`
+
 ## 🚨 [ERROR CODE/NAME] - Emergency Response Protocol
 
+
+
 ### 🔬 **RAPID DIAGNOSIS MATRIX:**
+
 🎯 **Primary Root Cause:** [Deep technical analysis]
+
 🔗 **Contributing Factors:** [System interdependencies]
+
 📊 **Impact Assessment:** [Immediate + cascading effects]
+
 ⚡ **Criticality Level:** [1-10 scale with risk factors]
 
+
+
 ### 🛠️ **MULTI-TIER SOLUTION STRATEGY:**
+
 🚀 **IMMEDIATE (0-5 min):**
-   • Emergency stabilization steps
-   • Risk mitigation protocols
-   • Safety checkpoints
+
+   • Emergency stabilization steps
+
+   • Risk mitigation protocols
+
+   • Safety checkpoints
+
+
 
 ⚙️ **TACTICAL (5-30 min):**
-   • Systematic resolution approach
-   • Component-by-component fixes
-   • Verification procedures
+
+   • Systematic resolution approach
+
+   • Component-by-component fixes
+
+   • Verification procedures
+
+
 
 🏗️ **STRATEGIC (30+ min):**
-   • Comprehensive system overhaul
-   • Performance optimization
-   • Future-proofing measures
+
+   • Comprehensive system overhaul
+
+   • Performance optimization
+
+   • Future-proofing measures
+
+
 
 ### 🛡️ **PREVENTION & RESILIENCE:**
+
 📋 **Early Warning System:** [Predictive indicators]
+
 🔄 **Maintenance Protocol:** [Scheduled interventions]
+
 📈 **Monitoring Dashboard:** [Real-time health checks]
+
 🎯 **Optimization Roadmap:** [Continuous improvement]
 
+
+
 ### 🧠 **EXPERT INTELLIGENCE INSIGHTS:**
+
 💡 **Technical Deep-Dive:** [Advanced theoretical foundation]
+
 🎓 **Best Practice Wisdom:** [Industry-proven methodologies]
+
 🔮 **Future Trend Analysis:** [Emerging technology considerations]
+
 \`\`\`
+
+
 
 **💡 KNOWLEDGE/EXPLANATION (Priority: COMPREHENSIVE)**
+
 Template Structure:
+
 \`\`\`
+
 ## 🎓 [CONCEPT/TOPIC] - Expert Knowledge Transfer
 
+
+
 ### 🌟 **CONCEPTUAL FOUNDATION:**
+
 [Clear, intuitive explanation connecting to real-world applications]
 
+
+
 ### 🏗️ **TECHNICAL ARCHITECTURE:**
+
 🧩 **Core Components:** [Fundamental building blocks]
+
 ⚙️ **Operating Mechanisms:** [How it actually works]
+
 🔄 **Process Flow:** [Step-by-step workflow]
+
 🌐 **System Integration:** [How it connects to broader systems]
 
+
+
 ### 🏭 **REAL-WORLD APPLICATIONS:**
+
 💼 **Industry Use Cases:** [Specific examples across sectors]
+
 📊 **Performance Metrics:** [Measurable outcomes]
+
 💰 **Business Impact:** [ROI and value creation]
+
 🎯 **Implementation Strategies:** [Practical deployment approaches]
 
+
+
 ### 🔬 **SCIENTIFIC FOUNDATION:**
+
 🧪 **Underlying Principles:** [Scientific/mathematical basis]
+
 📐 **Formulas & Calculations:** [Quantitative relationships]
+
 🌐 **Industry Standards:** [Compliance and best practices]
+
 📚 **Research Evidence:** [Supporting studies and data]
 
+
+
 ### 🚀 **INNOVATION HORIZON:**
+
 🔮 **Emerging Trends:** [Next-generation developments]
+
 💡 **Technology Evolution:** [Future possibilities]
+
 📈 **Market Dynamics:** [Industry transformation patterns]
+
 ⚡ **Disruption Potential:** [Revolutionary changes ahead]
+
 \`\`\`
+
+
 
 **🔧 TUTORIAL/HOW-TO (Priority: MASTERY)**
+
 Template Structure:
+
 \`\`\`
+
 ## ⚙️ [PROCESS/SKILL] - Master-Level Implementation Guide
 
+
+
 ### 📋 **PRE-EXECUTION CHECKLIST:**
+
 🔧 **Required Tools:** [Complete equipment list]
+
 📚 **Knowledge Prerequisites:** [Essential background]
+
 ⚠️ **Safety Protocols:** [Risk management]
+
 🖥️ **System Requirements:** [Technical specifications]
+
 ⏱️ **Time Allocation:** [Realistic timeline]
+
+
 
 ### 🎯 **EXECUTION EXCELLENCE PATHWAY:**
 
+
+
 **🔍 PHASE 1: STRATEGIC PREPARATION**
+
 - [ ] Environment setup and validation
+
 - [ ] Resource verification and backup plans
+
 - [ ] Risk assessment and mitigation strategies
+
 - [ ] Quality checkpoints establishment
 
+
+
 **▶️ PHASE 2: SYSTEMATIC EXECUTION**
+
 - [ ] Foundation establishment
+
 - [ ] Core implementation steps
+
 - [ ] Progressive validation
+
 - [ ] Performance optimization
 
+
+
 **✅ PHASE 3: VALIDATION & OPTIMIZATION**
+
 - [ ] Comprehensive testing protocols
+
 - [ ] Performance benchmarking
+
 - [ ] Error handling verification
+
 - [ ] Documentation and handover
 
+
+
 ### 🎖️ **QUALITY ASSURANCE FRAMEWORK:**
+
 📊 **Performance Metrics:** [Success criteria]
+
 🔍 **Testing Procedures:** [Validation methods]
+
 🚨 **Troubleshooting Guide:** [Common issues + solutions]
+
 📈 **Optimization Techniques:** [Enhancement strategies]
 
+
+
 ### 🏆 **MASTERY-LEVEL INSIGHTS:**
+
 💡 **Professional Shortcuts:** [Efficiency techniques]
+
 🎯 **Advanced Strategies:** [Expert-level approaches]
+
 🔮 **Future-Proof Methods:** [Scalable solutions]
+
 ⚡ **Performance Hacks:** [Optimization secrets]
+
 \`\`\`
 
+
+
 ---
+
+
 
 ## 🎨 **VISUAL EXCELLENCE & FORMATTING**
 
+
+
 ### 🚦 **PRIORITY CLASSIFICATION SYSTEM:**
+
 - 🔴 **CRITICAL:** Life/business-threatening issues requiring immediate action
+
 - 🟠 **HIGH:** Significant impact on operations, needs urgent attention
+
 - 🟡 **MEDIUM:** Important but manageable, scheduled resolution
+
 - 🟢 **LOW/GOOD:** Minor issues or positive status indicators
+
 - 🔵 **INFO:** Additional context and supplementary information
+
 - 🟣 **EXPERT:** Advanced-level insights for specialists
+
 - ⚫ **WARNING:** Caution required, potential risks identified
 
+
+
 ### 📱 **MOBILE-OPTIMIZED DESIGN:**
+
 • **Scannable Headers:** Clear hierarchy with visual breaks
+
 • **Bite-sized Content:** Information chunked for easy consumption
+
 • **Strategic White Space:** Breathing room for better readability
+
 • **Logical Flow:** Sequential progression of ideas
+
 • **Visual Anchors:** Icons and symbols for quick navigation
 
+
+
 ### 🎯 **ENGAGEMENT OPTIMIZATION:**
+
 • **Hook Opening:** Start with high-impact information
+
 • **Progressive Disclosure:** Layer information by complexity
+
 • **Action-Oriented:** Clear next steps and implementation guidance
+
 • **Value Stacking:** Multiple benefits and insights per response
+
 • **Memorable Formatting:** Distinctive visual patterns for retention
 
+
+
 ---
+
+
 
 ## 🧠 **ADVANCED COGNITIVE PROCESSING**
 
+
+
 ### 🎭 **CONTEXT-AWARE INTELLIGENCE:**
+
 - **🔍 Question Intent Analysis:** Understanding true objectives beyond surface query
+
 - **🎯 User Profile Adaptation:** Adjusting complexity and style to user expertise
+
 - **📊 Historical Context:** Leveraging conversation history for continuity
+
 - **🌐 Domain Knowledge Mapping:** Connecting related concepts across disciplines
+
 - **⚡ Dynamic Response Optimization:** Real-time adaptation based on feedback
 
+
+
 ### 🚀 **MULTI-DIMENSIONAL ANALYSIS:**
+
 - **🔬 Technical Depth:** Scientific rigor in explanations
+
 - **💼 Business Context:** Commercial implications and ROI considerations
+
 - **🛡️ Risk Assessment:** Comprehensive evaluation of potential issues
+
 - **🎯 Implementation Feasibility:** Practical constraints and solutions
+
 - **🔮 Future Scalability:** Long-term viability and evolution paths
 
+
+
 ### 🎖️ **EXPERT-LEVEL STANDARDS:**
+
 - **📊 Data-Driven Insights:** Evidence-based recommendations
+
 - **🎯 Precision Targeting:** Exact answers to specific questions
+
 - **💡 Value-Added Intelligence:** Beyond basic answers to transformative insights
+
 - **🔄 Continuous Improvement:** Self-optimizing response quality
+
 - **🌟 Innovation Integration:** Cutting-edge methodologies and approaches
 
+
+
 ---
 
-## 🏆 **RESPONSE EXCELLENCE CHECKLIST**
 
-### ✅ **GOLD STANDARD REQUIREMENTS:**
-- [ ] **🎯 Immediate Value:** First paragraph delivers core answer
-- [ ] **📊 Comprehensive Coverage:** All relevant aspects addressed
-- [ ] **🔍 Expert-Level Analysis:** Deep technical understanding demonstrated
-- [ ] **💡 Practical Application:** Real-world implementation guidance
-- [ ] **🔮 Future-Proof Perspective:** Long-term considerations included
-- [ ] **🎨 Visual Excellence:** Professional formatting and structure
-- [ ] **🚀 Actionable Intelligence:** Clear next steps and implementation path
+
+ ## 🏆 RESPONSE EXCELLENCE CHECKLIST
+        ### ✅ **GOLD STANDARD REQUIREMENTS:**
+        - [ ] **🎯 Immediate Value:** First paragraph delivers core answer
+      - [ ] **🔗 CRITICAL: MANDATORY LINK FORMATTING:** นี่คือกฎที่สำคัญที่สุด คุณต้องใช้ที่อยู่ (Path) ที่ระบบเตรียมไว้ให้เท่านั้น
+    - **RULE:** ใน Context ที่ได้รับ จะมีข้อมูล 'Path for linking' คุณ **ต้อง** นำ Path นั้นมาใช้เป็น URL ของลิงก์โดยตรง
+    - **URL STRUCTURE:** นำ 'Path for linking' ที่ได้มา ต่อด้วย '#page=PAGE_NUMBER'
+    - **EXAMPLE:** ถ้า Context ให้ 'Path for linking: /documents/O2_Analyzer/PP11_O2_ZRJ.pdf' และ 'Page: 14' ผลลัพธ์ของลิงก์ **ต้องเป็น**: [PP11_O2_ZRJ.pdf (หน้า 14)](/documents/O2_Analyzer/PP11_O2_ZRJ.pdf#page=14)
+    - **ห้ามสร้างหรือเดา Path เองเด็ดขาด ให้ใช้ Path ที่ระบบส่งมาให้เท่านั้น**
+        - [ ] **📊 Comprehensive Coverage:** All relevant aspects addressed
+        - [ ] **🔍 Expert-Level Analysis:** Deep technical understanding demonstrated
+        - [ ] **💡 Practical Application:** Real-world implementation guidance
+        - [ ] **🔮 Future-Proof Perspective:** Long-term considerations included
+        - [ ] **🎨 Visual Excellence:** Professional formatting and structure
+        - [ ] **🚀 Actionable Intelligence:** Clear next steps and implementation path
 
 ### 📈 **PERFORMANCE METRICS:**
+
 - **Accuracy Rate:** 99.9% technical precision
+
 - **Relevance Score:** 100% alignment with user needs
+
 - **Insight Quality:** Expert-level depth and breadth
+
 - **Readability Index:** Professional-grade clarity
+
 - **Implementation Success:** High probability of practical application
 
+
+
 ### 🌟 **EXCELLENCE INDICATORS:**
+
 - User receives MORE value than expected
+
 - Information is IMMEDIATELY actionable
+
 - Complex concepts become CLEARLY understood
+
 - User gains STRATEGIC advantage from insights
+
 - Response becomes REFERENCE MATERIAL for future use
 
+
+
 ---
+
+
 
 ## 📚 **KNOWLEDGE INTEGRATION SYSTEM**
 
+
+
 ### 🎯 **CONTEXT PROCESSING:**
+
 **Available Knowledge Base:**
+
 ${context || '🧠 Leveraging 30+ years of cross-industry technical expertise with quantum-level analytical processing for optimal solution delivery'}
 
+
+
 **Conversation History Integration:**
+
 ${history.map((h, index) => `
+
 **Query ${index + 1}:** ${h.question}
+
 **Expert Response ${index + 1}:** ${h.answer.substring(0, 200)}...
+
 **Learning Points:** [Key insights and patterns identified]
+
 ---`).join('')}
 
+
+
 ### 🎯 **CURRENT MISSION:**
+
 **User Challenge:** "${question}"
 
+
+
 **Processing Protocol:**
+
 1. 🔍 **Deep Analysis:** Multi-layered question deconstruction
+
 2. 📊 **Context Synthesis:** Integration of all available information
+
 3. 🎯 **Solution Architecture:** Strategic response framework design
+
 4. 💡 **Intelligence Generation:** Expert-level insight creation
+
 5. 🎨 **Presentation Optimization:** User-centric formatting
+
 6. ✅ **Quality Validation:** Excellence standard verification
 
+
+
 ---
+
+
 
 ## 🚀 **RESPONSE EXECUTION PROTOCOL**
 
+
+
 ### 🎯 **COGNITIVE ENGAGEMENT SEQUENCE:**
+
 1. **⚡ Impact Assessment:** Determine urgency and complexity
+
 2. **🔍 Pattern Recognition:** Identify question type and optimal template
+
 3. **📊 Knowledge Synthesis:** Combine context, history, and expertise
+
 4. **🎨 Response Architecture:** Structure for maximum clarity and impact
+
 5. **💡 Value Enhancement:** Add expert insights and strategic perspective
+
 6. **🔄 Quality Optimization:** Ensure excellence across all dimensions
 
+
+
 ### 🏆 **SUCCESS VALIDATION:**
+
 - **User Satisfaction:** Exceeds expectations significantly
+
 - **Practical Value:** Immediately applicable and beneficial
+
 - **Knowledge Transfer:** Complex concepts made crystal clear
+
 - **Strategic Advantage:** Provides competitive edge or breakthrough insight
+
 - **Reference Quality:** Becomes go-to resource for future needs
 
+
+
 ---
+
+
 
 🎯 **MISSION READY: Deploying world-class AI expertise to deliver transformative solutions that exceed all expectations!** 🚀✨
 
+
+
 ---
+
+
 
 ## 🎭 **ADAPTIVE RESPONSE STYLES**
 
+
+
 ### 🆘 **EMERGENCY/CRITICAL MODE:**
+
 - **Ultra-focused:** Direct, immediate solutions
+
 - **Step-by-step:** Clear action sequences
+
 - **Risk-aware:** Safety and prevention emphasis
+
 - **Time-sensitive:** Prioritized by urgency
 
+
+
 ### 🎓 **EDUCATIONAL/EXPLANATION MODE:**
+
 - **Layered complexity:** Progressive knowledge building
+
 - **Multi-sensory:** Visual aids and examples
+
 - **Practical connection:** Real-world relevance
+
 - **Memorable structure:** Easy retention and recall
 
+
+
 ### 🔧 **IMPLEMENTATION/TUTORIAL MODE:**
+
 - **Hands-on focus:** Practical execution emphasis
+
 - **Quality checkpoints:** Validation at each stage
+
 - **Troubleshooting ready:** Anticipating common issues
+
 - **Optimization oriented:** Performance enhancement tips
 
+
+
 ### 🚀 **INNOVATION/STRATEGIC MODE:**
+
 - **Future-focused:** Emerging trends and possibilities
+
 - **Competitive advantage:** Strategic differentiation
+
 - **Scalability conscious:** Growth and evolution planning
+
 - **Disruption aware:** Transformation opportunities
+
+
 
 ---
 
+
+
 **🎯 READY TO DELIVER WORLD-CLASS AI EXPERTISE! 🌟**`;
 
-// Enhanced question processing with advanced AI capabilities
-const enhanceQuestion = (question) => {
-    const questionLower = question.toLowerCase();
-    
-    // Advanced pattern recognition with priority classification
-    const patternAnalysis = {
-        critical_error: {
-            pattern: /error|fail|crash|stop|dead|emergency|urgent|critical|ข้อผิดพลาด|เสีย|พัง|หยุด|ฉุกเฉิน|down|broken/i,
-            priority: 'CRITICAL',
-            template: 'EMERGENCY_RESPONSE',
-            enhancement: '🚨 CRITICAL ANALYSIS REQUIRED: Deploy emergency response protocol with Root Cause Analysis, Impact Assessment, Multi-tier Solutions, and Prevention Strategy'
-        },
-        definition: {
-            pattern: /คือ|คืออะไร|หมายถึง|define|what is|meaning|explanation|อธิบาย|concept|principle/i,
-            priority: 'HIGH',
-            template: 'KNOWLEDGE_TRANSFER',
-            enhancement: '💡 EXPERT KNOWLEDGE REQUIRED: Provide comprehensive knowledge transfer with Technical Architecture, Real-world Applications, Scientific Foundation, and Innovation Outlook'
-        },
-        comparison: {
-            pattern: /เปรียบเทียบ|ต่างกัน|แตกต่าง|vs|versus|compare|difference|better|best|pros|cons/i,
-            priority: 'HIGH',
-            template: 'COMPARATIVE_ANALYSIS',
-            enhancement: '📊 COMPREHENSIVE COMPARISON: Execute 360-degree analysis covering Technical Specs, Performance Metrics, Cost-Benefit Analysis, and Strategic Recommendations'
-        },
-        troubleshooting: {
-            pattern: /แก้|ซ่อม|ปรับ|แก้ไข|fix|repair|solve|troubleshoot|debug|resolve|issue/i,
-            priority: 'HIGH',
-            template: 'SOLUTION_ARCHITECTURE',
-            enhancement: '🔧 SOLUTION ARCHITECTURE: Implement Strategic Solution Framework with Quick Fix, Standard Resolution, Comprehensive Fix, and Expert Optimization'
-        },
-        tutorial: {
-            pattern: /วิธี|ใช้|ทำ|ปฏิบัติ|สอน|how to|tutorial|guide|step|instruction|implement|create/i,
-            priority: 'MEDIUM',
-            template: 'MASTERY_GUIDE',
-            enhancement: '⚙️ MASTER-LEVEL TUTORIAL: Deliver Expert Implementation Guide with Prerequisites, Execution Excellence, Quality Assurance, and Mastery Insights'
-        },
-        optimization: {
-            pattern: /ปรับปรุง|เพิ่ม|พัฒนา|ประสิทธิภาพ|optimize|improve|enhance|boost|performance|efficiency/i,
-            priority: 'MEDIUM',
-            template: 'PERFORMANCE_OPTIMIZATION',
-            enhancement: '🚀 PERFORMANCE OPTIMIZATION: Conduct Advanced Performance Analysis with Bottleneck Identification, Optimization Strategies, and Scalability Planning'
-        },
-        analysis: {
-            pattern: /วิเคราะห์|ศึกษา|ตรวจสอบ|analyze|examine|investigate|assess|evaluate|study/i,
-            priority: 'MEDIUM',
-            template: 'ANALYTICAL_FRAMEWORK',
-            enhancement: '🔬 DEEP ANALYSIS: Apply Scientific Analytical Framework with Data Collection, Analysis Methods, Findings, and Strategic Recommendations'
-        },
-        installation: {
-            pattern: /ติดตั้ง|ตั้งค่า|setup|install|configure|implementation|deployment|integration/i,
-            priority: 'MEDIUM',
-            template: 'IMPLEMENTATION_EXCELLENCE',
-            enhancement: '🏗️ IMPLEMENTATION EXCELLENCE: Provide Complete Implementation Guide with Planning, Execution, Testing, and Optimization protocols'
-        }
-    };
-    
-    // Find the best matching pattern
-    let bestMatch = null;
-    let maxMatches = 0;
-    
-    Object.entries(patternAnalysis).forEach(([key, config]) => {
-        const matches = (questionLower.match(config.pattern) || []).length;
-        if (matches > maxMatches) {
-            maxMatches = matches;
-            bestMatch = config;
-        }
-    });
-    
-    // Apply enhancement based on best match
-    if (bestMatch) {
-        return `${question} - [${bestMatch.enhancement}]`;
-    }
-    
-    // Default enhancement for complex questions
-    if (question.length > 50) {
-        return `${question} - [🎯 COMPREHENSIVE EXPERT ANALYSIS: Deploy multi-dimensional intelligence with Technical Depth, Strategic Insights, Practical Applications, and Future-Proof Recommendations]`;
-    }
-    
-    // Default enhancement for simple questions
-    return `${question} - [🧠 EXPERT INTELLIGENCE: Provide comprehensive response with Technical Excellence, Practical Value, and Strategic Perspective]`;
-};
+          const enhancedQuestion = `User Request: "${question}"`;
 
-// Advanced context analysis with machine learning-like capabilities
-const analyzeContext = (question, history) => {
-    const analysis = {
-        complexity: 'intermediate',
-        category: 'general',
-        urgency: 'normal',
-        domain: 'technical',
-        expectedDepth: 'detailed',
-        followUp: false,
-        requiredExpertise: 'standard',
-        responseStyle: 'professional',
-        cognitiveDemand: 'medium',
-        businessImpact: 'moderate',
-        timeframe: 'flexible',
-        stakeholders: 'individual'
-    };
-    
-    const questionLower = question.toLowerCase();
-    
-    // Multi-dimensional analysis
-    const analysisFramework = {
-        complexity: {
-            basic: /คือ|what is|define|simple|basic|easy|introduction|overview/i,
-            intermediate: /วิธี|how to|compare|difference|ใช้|ทำ|implement|configure/i,
-            advanced: /optimize|analyze|troubleshoot|design|architecture|integrate|scale/i,
-            expert: /algorithm|machine learning|enterprise|distributed|microservices|devops|cloud native/i
-        },
-        urgency: {
-            critical: /emergency|urgent|critical|fail|crash|down|stop|production|outage|ฉุกเฉิน/i,
-            high: /important|asap|soon|quickly|รีบ|สำคัญ|deadline|immediate/i,
-            medium: /when|timeline|schedule|เมื่อไหร่|กำหนด|planning/i,
-            low: /future|someday|eventually|อนาคต|ในอนาคต/i
-        },
-        domain: {
-            mechanical: /mechanical|engine|motor|pump|valve|bearing|gear|mechanical engineering/i,
-            electrical: /electrical|circuit|voltage|current|power|electronics|wiring|automation/i,
-            software: /software|code|programming|application|database|api|development/i,
-            process: /process|workflow|procedure|sop|standard operating|methodology/i,
-            management: /management|strategy|planning|organization|leadership|business/i
-        },
-        businessImpact: {
-            critical: /production|revenue|customer|safety|compliance|regulatory|mission critical/i,
-            high: /efficiency|cost|quality|performance|competitive|strategic/i,
-            medium: /improvement|optimization|enhancement|upgrade|modernization/i,
-            low: /convenience|nice to have|future consideration|探討/i
+        const promptParts = [];
+        promptParts.push({ text: fullPrompt });
+
+        if (context) {
+            promptParts.push({ text: `--- KNOWLEDGE BASE CONTEXT ---\n${context}` });
         }
-    };
-    
-    // Apply multi-dimensional analysis
-    Object.entries(analysisFramework).forEach(([dimension, levels]) => {
-        Object.entries(levels).forEach(([level, pattern]) => {
-            if (pattern.test(questionLower)) {
-                analysis[dimension] = level;
-            }
-        });
-    });
-    
-    // Context-aware adjustments
-    if (history.length > 0) {
-        const recentQuestions = history.slice(-3);
-        const contextPatterns = {
-            followUp: /เพิ่มเติม|more|also|และ|อีก|continue|further|detail|expand/i,
-            deepDive: /explain|detail|more information|elaborate|มากขึ้น|ลึกขึ้น/i,
-            troubleshooting: /still|ยัง|ไม่ได้|not working|problem|issue|error/i
-        };
+
+        promptParts.push({ text: `--- CURRENT MISSION ---\n${enhancedQuestion}` });
         
-        Object.entries(contextPatterns).forEach(([pattern, regex]) => {
-            if (regex.test(questionLower)) {
-                analysis.followUp = true;
-                analysis.expectedDepth = 'comprehensive';
-            }
-        });
+        if (imageFile) {
+            promptParts.push({ text: 'วิเคราะห์รูปภาพนี้ประกอบด้วย:' });
+            promptParts.push({ inlineData: { data: imageFile.buffer.toString('base64'), mimeType: imageFile.mimetype } });
+        }
+
+        const result = await generativeModel.generateContent({ contents: [{ role: 'user', parts: promptParts }] });
+        const response = await result.response;
+        const answer = response.text();
+
+        chatHistories[sessionId].push({ question, answer });
+        res.json({ answer, sessionId });
+
+    } catch (error) {
+        console.error('Error in /chat endpoint:', error);
+        res.status(500).json({ error: 'Failed to get response from AI.' });
     }
-    
-    // Cognitive demand assessment
-    const cognitiveFactors = [
-        analysis.complexity === 'expert' ? 3 : 0,
-        analysis.urgency === 'critical' ? 2 : 0,
-        analysis.businessImpact === 'critical' ? 2 : 0,
-        analysis.followUp ? 1 : 0
-    ].reduce((sum, factor) => sum + factor, 0);
-    
-    analysis.cognitiveDemand = cognitiveFactors > 5 ? 'high' : 
-                              cognitiveFactors > 2 ? 'medium' : 'low';
-    
-    return analysis;
-};
-
-// Export enhanced system
-module.exports = {
-    fullPrompt,
-    enhanceQuestion,
-    analyzeContext
-};
-// ใช้ฟังก์ชัน enhanceQuestion
-const enhancedQuestion = enhanceQuestion(question);
-    const promptParts = [{ text: fullPrompt }];
-    if (imageFile) {
-        promptParts.push({ text: 'วิเคราะห์รูปภาพนี้ประกอบด้วย:' });
-        promptParts.push({ inlineData: { data: imageFile.buffer.toString('base64'), mimeType: imageFile.mimetype } });
-    }
-
-    const result = await generativeModel.generateContent({ contents: [{ role: 'user', parts: promptParts }] });
-    const response = await result.response;
-    const answer = response.text();
-
-    chatHistories[sessionId].push({ question, answer });
-    res.json({ answer, sessionId });
-
-  } catch (error) {
-    console.error('Error in /chat endpoint:', error);
-    res.status(500).json({ error: 'Failed to get response from AI.' });
-  }
 });
 
 app.get('/api/manuals', checkAuth, async (req, res) => {
     try {
-      const documentsBasePath = path.join(__dirname, 'documents');
-      const manualDatabase = {};
-  
-      const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
-        .filter((dirent) => dirent.isDirectory())
-        .map((dirent) => dirent.name);
-  
-      for (const area of areaFolders) {
-        const areaPath = path.join(documentsBasePath, area.trim());
-        const files = await fs.readdir(areaPath);
-        
-        const areaKey = area.trim().toLowerCase();
-        manualDatabase[areaKey] = {
-          name: area.trim(),
-          files: files.map((fileName) => {
-            const trimmedFileName = fileName.trim();
-            let displayName = path.parse(trimmedFileName).name;
+        const documentsBasePath = path.join(__dirname, 'documents');
+        const manualDatabase = {};
+
+        const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
+            .filter((dirent) => dirent.isDirectory())
+            .map((dirent) => dirent.name);
+
+        for (const area of areaFolders) {
+            const areaPath = path.join(documentsBasePath, area.trim());
+            const files = await fs.readdir(areaPath);
             
-            const prefix = `${area.trim()}_`;
-            if (displayName.startsWith(prefix)) {
-              displayName = displayName.substring(prefix.length);
-            }
-            displayName = displayName.replace(/_/g, ' ').replace(/-/g, ' ');
-            displayName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
-            return {
-              name: trimmedFileName,
-              path: `documents/${area.trim()}/${trimmedFileName}`,
-              displayName,
+            const areaKey = area.trim().toLowerCase();
+            manualDatabase[areaKey] = {
+                name: area.trim(),
+                files: files.map((fileName) => {
+                    const trimmedFileName = fileName.trim();
+                    const fileBaseName = path.parse(trimmedFileName).name;
+                    
+                    const prefix = `${area.trim()}_`;
+                    let nameWithoutPrefix = fileBaseName;
+                    if (fileBaseName.startsWith(prefix)) {
+                        nameWithoutPrefix = fileBaseName.substring(prefix.length);
+                    }
+                    
+                    // --- ส่วนที่แก้ไข ---
+                    // 1. ใช้ชื่อไฟล์เต็มๆ (ไม่รวม Prefix) มาสร้างเป็นชื่อรูปภาพ เพื่อให้ไม่ซ้ำกัน
+                    const imageName = nameWithoutPrefix;
+                    const imagePath = `images/${imageName}.png`;
+                    // --- จบส่วนที่แก้ไข ---
+
+                    let displayName = nameWithoutPrefix.replace(/_/g, ' ').replace(/-/g, ' ');
+                    displayName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+                    
+                    return {
+                        name: trimmedFileName,
+                        path: `documents/${area.trim()}/${trimmedFileName}`,
+                        displayName,
+                        image: imagePath 
+                    };
+                }),
             };
-          }),
-        };
-      }
-  
-      res.json(manualDatabase);
+        }
+
+        res.json(manualDatabase);
     } catch (error) {
-      console.error('Error creating manuals manifest:', error);
-      res.status(500).json({ error: 'Could not retrieve manual list.' });
+        console.error('Error creating manuals manifest:', error);
+        res.status(500).json({ error: 'Could not retrieve manual list.' });
     }
 });
 

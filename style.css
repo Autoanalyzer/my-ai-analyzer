@@ -114,3 +114,26 @@ button, .button-link, .button-back { padding: 10px 20px; border: none; border-ra
     margin-top: 10px;
     margin-right: 10px;
 }
+/* --- CSS สำหรับปุ่มเลือกคู่มือพร้อมรูปภาพ (เพิ่มต่อท้ายไฟล์) --- */
+
+/* ทำให้ปุ่มลิงก์จัดเรียงรูปภาพและข้อความ */
+.manuals-list-container .button-link {
+    display: flex;
+    align-items: center;
+    text-align: left; /* จัดข้อความชิดซ้ายเพื่อให้สวยงามเมื่อมีรูป */
+    gap: 15px;        /* ระยะห่างระหว่างรูปกับข้อความ */
+    padding: 10px 15px;
+}
+
+/* ตั้งค่าขนาดรูปภาพในปุ่ม */
+.manuals-list-container .button-link img {
+    width: 80px;
+    height: 80px;
+    object-fit: contain; /* ให้ภาพพอดีกับกรอบโดยไม่เสียสัดส่วน */
+    flex-shrink: 0;      /* ป้องกันไม่ให้รูปถูกบีบเมื่อข้อความยาว */
+}
+
+/* ตั้งค่าให้ข้อความยืดหยุ่น */
+.manuals-list-container .button-link span {
+    flex-grow: 1; /* ทำให้ข้อความใช้พื้นที่ที่เหลือทั้งหมด */
+}

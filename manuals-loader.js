@@ -3,33 +3,33 @@ const manualDatabase = {
     'lk2': {
         name: 'LK2',
         files: [
-            { name: 'LK2_2700C_Analyser_Service_Manual.pdf', path: 'documents/LK2/LK2_2700C_Analyser_Service_Manual.pdf', displayName: '2700C Analyser Service Manual' },
-            { name: 'LK2_adam_4000_manual.pdf', path: 'documents/LK2/LK2_adam_4000_manual.pdf', displayName: 'Adam 4000 Manual' },
-            { name: 'LK2_Analytical_Diaphragm_Pump_MP30.pdf', path: 'documents/LK2/LK2_Analytical_Diaphragm_Pump_MP30.pdf', displayName: 'Analytical Diaphragm Pump MP30' },
-            { name: 'LK2_CO_O2_ZRJ.pdf', path: 'documents/LK2/LK2_CO_O2_ZRJ.pdf', displayName: 'CO,O2 ZRJ' },
+            { name: 'LK2_2700C_Analyser_Service_Manual.pdf', path: 'documents/LK2/LK2_2700C_Analyser_Service_Manual.pdf', displayName: '2700C Analyser Service Manual',"image": 'images/2700C_Analyser_Service_Manual.png' },
+            { name: 'LK2_adam_4000_manual.pdf', path: 'documents/LK2/LK2_adam_4000_manual.pdf', displayName: 'Adam 4000 Manual',image: 'images/adam_4000_manual.png' },
+            { name: 'LK2_Analytical_Diaphragm_Pump_MP30.pdf', path: 'documents/LK2/LK2_Analytical_Diaphragm_Pump_MP30.pdf', displayName: 'Analytical Diaphragm Pump MP30',image: 'images/Analytical_Diaphragm_Pump_MP30.png' },
+            { name: 'LK2_CO_O2_ZRJ.pdf', path: 'documents/LK2/LK2_CO_O2_ZRJ.pdf', displayName: 'CO,O2 ZRJ' ,image: 'images/CO.png' },
             { name: 'LK2_Cooler_M_ECP3000_EN.pdf', path: 'documents/LK2/LK2_Cooler_M_ECP3000_EN.pdf', displayName: 'Cooler M ECP3000 EN' },
-            { name: 'LK2_Dust_Hunter_T100.pdf', path: 'documents/LK2/LK2_Dust_Hunter_T100.pdf', displayName: 'Dust-Hunter T100' },
-            { name: 'LK2_H2S_T101_Manual.pdf', path: 'documents/LK2/LK2_H2S_T101_Manual.pdf', displayName: 'H2S T101 Manual' },
-            { name: 'LK2_Heated_line.pdf', path: 'documents/LK2/LK2_Heated_line.pdf', displayName: 'Heated line' },
-            { name: 'LK2_Liquid_Particle_Filter_CLF-5.pdf', path: 'documents/LK2/LK2_Liquid_Particle_Filter_CLF-5.pdf', displayName: 'Liquid Particle Filter CLF-5' },
-            { name: 'LK2_Liquid_stop_M_LB1_EN.pdf', path: 'documents/LK2/LK2_Liquid_stop_M_LB1_EN.pdf', displayName: 'Liquid stop M LB1 EN' },
-            { name: 'LK2_MSDS_H2O2.pdf', path: 'documents/LK2/LK2_MSDS_H2O2.pdf', displayName: 'MSDS H2O2' },
+            { name: 'LK2_Dust_Hunter_T100.pdf', path: 'documents/LK2/LK2_Dust_Hunter_T100.pdf', displayName: 'Dust-Hunter T100',image: 'images/Dust.png'  },
+            { name: 'LK2_H2S_T101_Manual.pdf', path: 'documents/LK2/LK2_H2S_T101_Manual.pdf', displayName: 'H2S T101 Manual',image: 'images/H2S.png'  },
+            { name: 'LK2_Heated_line.pdf', path: 'documents/LK2/LK2_Heated_line.pdf', displayName: 'Heated line',image: 'images/Heated.png'  },
+            { name: 'LK2_Liquid_Particle_Filter_CLF-5.pdf', path: 'documents/LK2/LK2_Liquid_Particle_Filter_CLF-5.pdf', displayName: 'Liquid Particle Filter CLF-5',image: 'images/Liquid.png'  },
+            { name: 'LK2_Liquid_stop_M_LB1_EN.pdf', path: 'documents/LK2/LK2_Liquid_stop_M_LB1_EN.pdf', displayName: 'Liquid stop M LB1 EN',image: 'images/Cooler.png'  },
+            { name: 'LK2_MSDS_H2O2.pdf', path: 'documents/LK2/LK2_MSDS_H2O2.pdf', displayName: 'MSDS H2O2',image: 'images/Cooler.png'  },
             { name: 'LK2_NOx_T200HM.pdf', path: 'documents/LK2/LK2_NOx_T200HM.pdf', displayName: 'NOx T200HM' },
-            { name: 'LK2_Operation_manual_EX9017.pdf', path: 'documents/LK2/LK2_Operation_manual_EX9017.pdf', displayName: 'Operation manual EX9017' },
-            { name: 'LK2_Oxitec_5000_Oxygen_Analyser.pdf', path: 'documents/LK2/LK2_Oxitec_5000_Oxygen_Analyser.pdf', displayName: 'Oxitec 5000 Oxygen Analyser' },
-            { name: 'LK2_OXITEC_13_142_EN.pdf', path: 'documents/LK2/LK2_OXITEC_13_142_EN.pdf', displayName: 'OXITEC 13 142 EN' },
-            { name: 'LK2_Peristaltic_pump_SR25_1.pdf', path: 'documents/LK2/LK2_Peristaltic_pump_SR25_1.pdf', displayName: 'Peristaltic pump SR25.1' },
-            { name: 'LK2_Peristaltic_pump_1rpm_SR25.pdf', path: 'documents/LK2/LK2_Peristaltic_pump_1rpm_SR25.pdf', displayName: 'Peristaltic pump 1rpm SR25' },
-            { name: 'LK2_Peristaltic_pump_5rpm_SR25.pdf', path: 'documents/LK2/LK2_Peristaltic_pump_5rpm_SR25.pdf', displayName: 'Peristaltic pump 5rpm SR25' },
-            { name: 'LK2_PPD_MD_Series_Manual.pdf', path: 'documents/LK2/LK2_PPD_MD_Series_Manual.pdf', displayName: 'PPD MD-Series Manual' },
-            { name: 'LK2_Probe_model_M_SP2200.pdf', path: 'documents/LK2/LK2_Probe_model_M_SP2200.pdf', displayName: 'Probe model M SP2200' },
-            { name: 'LK2_RC22_Manual.pdf', path: 'documents/LK2/LK2_RC22_Manual.pdf', displayName: 'RC22 Manual' },
-            { name: 'LK2_sampline_probe_PDS_JES301.pdf', path: 'documents/LK2/LK2_sampline_probe_PDS_JES301.pdf', displayName: 'sampline probe PDS JES301' },
-            { name: 'LK2_SO2_analyzer_T100H.pdf', path: 'documents/LK2/LK2_SO2_analyzer_T100H.pdf', displayName: 'SO2 analyzer T100H' },
-            { name: 'LK2_TRS_T102.pdf', path: 'documents/LK2/LK2_TRS_T102.pdf', displayName: 'TRS T102' },
-            { name: 'LK2_TRS_H2S_USER_NVS_T101_T102.pdf', path: 'documents/LK2/LK2_TRS_H2S_USER_NVS_T101_T102.pdf', displayName: 'TRS,H2S, USER, NVS, T101-T102' },
-            { name: 'LK2_Ultra_fine_filter_FP.pdf', path: 'documents/LK2/LK2_Ultra_fine_filter_FP.pdf', displayName: 'Ultra-fine filter FP' },
-            { name: 'LK2_Universal_Filter_FP-2T-D.pdf', path: 'documents/LK2/LK2_Universal_Filter_FP-2T-D.pdf', displayName: 'Universal Filter FP-2T-D' }
+            { name: 'LK2_Operation_manual_EX9017.pdf', path: 'documents/LK2/LK2_Operation_manual_EX9017.pdf', displayName: 'Operation manual EX9017',"image": "images/Operation_manual_EX9017.png" },
+            { name: 'LK2_Oxitec_5000_Oxygen_Analyser.pdf', path: 'documents/LK2/LK2_Oxitec_5000_Oxygen_Analyser.pdf', displayName: 'Oxitec 5000 Oxygen Analyser',"image": "images/Oxitec_5000_Oxygen_Analyser.png" },
+            { name: 'LK2_OXITEC_13_142_EN.pdf', path: 'documents/LK2/LK2_OXITEC_13_142_EN.pdf', displayName: 'OXITEC 13 142 EN', "image": "images/OXITEC_13_142_EN.png" },
+            { name: 'LK2_Peristaltic_pump_SR25_1.pdf', path: 'documents/LK2/LK2_Peristaltic_pump_SR25_1.pdf', displayName: 'Peristaltic pump SR25.1',"image": "images/Peristaltic_pump_SR25_1.png" },
+            { name: 'LK2_Peristaltic_pump_1rpm_SR25.pdf', path: 'documents/LK2/LK2_Peristaltic_pump_1rpm_SR25.pdf', displayName: 'Peristaltic pump 1rpm SR25',"image": "images/Peristaltic_pump_1rpm_SR25.png" },
+            { name: 'LK2_Peristaltic_pump_5rpm_SR25.pdf', path: 'documents/LK2/LK2_Peristaltic_pump_5rpm_SR25.pdf', displayName: 'Peristaltic pump 5rpm SR25',"image": "images/Peristaltic_pump_5rpm_SR25.png" },
+            { name: 'LK2_PPD_MD_Series_Manual.pdf', path: 'documents/LK2/LK2_PPD_MD_Series_Manual.pdf', displayName: 'PPD MD-Series Manual',"image": "images/PPD_MD_Series_Manual.png" },
+            { name: 'LK2_Probe_model_M_SP2200.pdf', path: 'documents/LK2/LK2_Probe_model_M_SP2200.pdf', displayName: 'Probe model M SP2200',"image": "images/Probe_model_M_SP2200.png" },
+            { name: 'LK2_RC22_Manual.pdf', path: 'documents/LK2/LK2_RC22_Manual.pdf', displayName: 'RC22 Manual', "image": "images/RC22_Manual.png" },
+            { name: 'LK2_sampline_probe_PDS_JES301.pdf', path: 'documents/LK2/LK2_sampline_probe_PDS_JES301.pdf', displayName: 'sampline probe PDS JES301',"image": "images/sampline_probe_PDS_JES301.png" },
+            { name: 'LK2_SO2_analyzer_T100H.pdf', path: 'documents/LK2/LK2_SO2_analyzer_T100H.pdf', displayName: 'SO2 analyzer T100H',"image": "images/SO2_analyzer_T100H.png" },
+            { name: 'LK2_TRS_T102.pdf', path: 'documents/LK2/LK2_TRS_T102.pdf', displayName: 'TRS T102',"image": "images/TRS_T102.png" },
+            { name: 'LK2_TRS_H2S_USER_NVS_T101_T102.pdf', path: 'documents/LK2/LK2_TRS_H2S_USER_NVS_T101_T102.pdf', displayName: 'TRS,H2S, USER, NVS, T101-T102',"image": "images/TRS_H2S_USER_NVS_T101_T102.png" },
+            { name: 'LK2_Ultra_fine_filter_FP.pdf', path: 'documents/LK2/LK2_Ultra_fine_filter_FP.pdf', displayName: 'Ultra-fine filter FP', "image": "images/Ultra_fine_filter_FP.png"},
+            { name: 'LK2_Universal_Filter_FP-2T-D.pdf', path: 'documents/LK2/LK2_Universal_Filter_FP-2T-D.pdf', displayName: 'Universal Filter FP-2T-D',"image": "images/Universal_Filter_FP-2T-D.png"  }
         ]
     },
     'pp11': {
@@ -220,6 +220,9 @@ const manualDatabase = {
     }
 };
 
+// โค้ดนี้ไม่ต้องใช้แล้วเพราะเราจะดึงข้อมูลจาก Server
+// const manualDatabase = { ... };
+
 const BACKEND_URL = 'http://localhost:5500';
 
 // ทำให้ฟังก์ชันเป็น async เพื่อรอ fetch ข้อมูล
@@ -261,13 +264,27 @@ document.addEventListener('DOMContentLoaded', async () => {
             const pathParts = file.path.split('/');
             const encodedPath = pathParts.map(part => encodeURIComponent(part)).join('/');
 
+            // --- ส่วนที่แก้ไข ---
             const link = document.createElement('a');
             link.href = `${BACKEND_URL}/${encodedPath}`;
-
-            link.textContent = file.displayName;
             link.target = '_blank';
-            link.className = 'button-link';
+            link.className = 'button-link'; // ใช้ class เดิม
+
+            // สร้าง Element รูปภาพ
+            const img = document.createElement('img');
+            // ใช้ที่อยู่รูปจาก `file.image` หรือใช้รูปดีฟอลต์ถ้าไม่มี
+            img.src = file.image || 'images/default-icon.png';
+            img.alt = file.displayName;
+
+            // สร้าง Element ข้อความ
+            const span = document.createElement('span');
+            span.textContent = file.displayName;
+
+            // นำรูปและข้อความใส่เข้าไปใน Link
+            link.appendChild(img);
+            link.appendChild(span);
             listContainer.appendChild(link);
+            // --- จบส่วนที่แก้ไข ---
 
             if (selectElement) {
                 const option = document.createElement('option');

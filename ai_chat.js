@@ -110,12 +110,21 @@ document.addEventListener('DOMContentLoaded', function () {
             messageDiv.appendChild(imgElement);
         }
 
-        if (content.text) {
-            const textElement = document.createElement('p');
-            textElement.innerHTML = content.text.replace(/\n/g, '<br>');
-            textElement.style.margin = 0;
-            messageDiv.appendChild(textElement);
-        }
+       if (content.text) {
+    const textElement = document.createElement('p');
+
+    // ✨ 1. แปลง Markdown Link [text](url) ให้เป็น HTML <a>
+    const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+    let processedText = content.text.replace(markdownLinkRegex, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+    // ✨ 2. แปลงตัวขึ้นบรรทัดใหม่ (\n) เป็น <br>
+    processedText = processedText.replace(/\n/g, '<br>');
+
+    // ✨ 3. ใช้ innerHTML เพื่อแสดงผลข้อความที่ผ่านการแปลงแล้ว
+    textElement.innerHTML = processedText;
+    textElement.style.margin = 0;
+    messageDiv.appendChild(textElement);
+}
 
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
