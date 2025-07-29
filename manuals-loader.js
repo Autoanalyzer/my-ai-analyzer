@@ -223,7 +223,7 @@ const manualDatabase = {
 // โค้ดนี้ไม่ต้องใช้แล้วเพราะเราจะดึงข้อมูลจาก Server
 // const manualDatabase = { ... };
 
-const BACKEND_URL = 'http://localhost:5500';
+const BACKEND_URL = 'https://my-ai-analyzer.onrender.com';
 
 // ทำให้ฟังก์ชันเป็น async เพื่อรอ fetch ข้อมูล
 document.addEventListener('DOMContentLoaded', async () => {
