@@ -10,14 +10,14 @@ const path = require('path');
 const session = require('express-session');
 
 const {
- GoogleGenerativeAI,
- HarmCategory,
- HarmBlockThreshold,
+  GoogleGenerativeAI,
+  HarmCategory,
+  HarmBlockThreshold,
 } = require('@google/generative-ai');
-const { Pinecone } = require('@pinecone-database/pinecone');
-// (ลบบรรทัดที่ซ้ำออกไปแล้ว)
-// ลบ MemoryVectorStore, RecursiveCharacterTextSplitter, PDFLoader ออก
-// เพราะเราไม่ต้องสร้าง Vector Store เองใน Server อีกต่อไป
+const { GoogleGenerativeAIEmbeddings } = require('@langchain/google-genai');
+const { MemoryVectorStore } = require('langchain/vectorstores/memory');
+const { RecursiveCharacterTextSplitter } = require('langchain/text_splitter');
+const { PDFLoader } = require('langchain/document_loaders/fs/pdf');
 const app = express();
 const port = process.env.PORT || 5500;
 // --- 2. ตั้งค่า User และ Session ---
@@ -34,23 +34,91 @@ app.use(session({
 }));
 
 const chatHistories = {};
+let vectorStore;
 
-// ... (โค้ด app.use ต่างๆ) ...
+const VECTOR_STORE_SAVE_PATH = path.join(__dirname, 'vector_store.json');
 
-// --- ตั้งค่า AI และ Pinecone Client ---
+app.use(cors());
+app.use(express.json());
+// ... (โค้ด app.use(cors), app.use(express.json) ของคุณ)
+app.use((req, res, next) => {
+    console.log(`[DEBUG] Incoming Request: ${req.method} ${req.originalUrl}`);
+    next();
+});
+// --- 1. เพิ่ม Middleware สำหรับตรวจสอบการ Login ---
+const checkAuth = (req, res, next) => {
+    console.log('[DEBUG] --- Running checkAuth ---');
+    console.log('[DEBUG] Session ID:', req.session.id);
+    console.log('[DEBUG] req.session.userId is:', req.session.userId);
+
+    if (!req.session.userId) {
+        console.log('[DEBUG] Condition is TRUE. Redirecting to /login.html');
+        return res.redirect('/login.html');
+    }
+    
+    console.log('[DEBUG] Condition is FALSE. User is authenticated. Allowing access.');
+    next();
+};
+// ... (โค้ด checkAuth จากขั้นตอนที่ 1)
+
+// --- 2. สร้าง Endpoint สำหรับ Login และ Logout ---
+app.post('/login', (req, res) => {
+    const { username, password } = req.body;
+    const user = users.find(u => u.username === username && u.password === password);
+
+    if (user) {
+        req.session.userId = user.id;
+        req.session.username = user.username;
+        return res.json({ message: 'Login successful' });
+    }
+
+    return res.status(401).json({ error: 'Invalid username or password' });
+});
+
+app.get('/logout', (req, res) => {
+    req.session.destroy(err => {
+        if (err) {
+            return res.redirect('/index.html');
+        }
+        res.clearCookie('connect.sid');
+        res.redirect('/login.html');
+    });
+});
+app.get('/', checkAuth, (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/index.html', checkAuth, (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/details.html', checkAuth, (req, res) => {
+    res.sendFile(path.join(__dirname, 'details.html'));
+});
+
+app.get('/manuals.html', checkAuth, (req, res) => {
+    res.sendFile(path.join(__dirname, 'manuals.html'));
+});
+app.use(express.static(__dirname));
+
+const upload = multer({ storage: multer.memoryStorage() });
+
 const safetySettings = [
-    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const generativeModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash', safetySettings });
-const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
 
-const pc = new Pinecone();
-const pineconeIndex = pc.index(process.env.PINECONE_INDEX_NAME);
-console.log('✅ Connected to Pinecone index successfully.');
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const generativeModel = genAI.getGenerativeModel({
+  model: 'gemini-2.0-flash',
+  safetySettings,
+});
+const embeddingsModel = new GoogleGenerativeAIEmbeddings({
+  apiKey: process.env.GEMINI_API_KEY,
+  model: 'text-embedding-004',
+});
 
 async function initializeVectorStore() {
   try {
@@ -154,25 +222,18 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
             return res.status(400).json({ error: 'Question is required.' });
         }
 
-        // ไม่ต้องเช็ค !vectorStore อีกต่อไป
+        if (!vectorStore) {
+            return res.status(503).json({ error: 'AI knowledge base is not ready. Please wait.' });
+        }
 
-// 1. แปลงคำถามเป็น Vector
-const embeddingResult = await embeddingModel.embedContent(question);
-const queryVector = embeddingResult.embedding.values;
+        let filter;
+        if (manual && manual !== 'all') {
+            filter = (doc) => doc.metadata.source === manual.trim();
+        } else if (area) {
+            filter = (doc) => doc.metadata.area === area.trim();
+        }
 
-// 2. สร้าง filter ตาม Syntax ของ Pinecone (แบบ Object)
-let pineconeFilter = { area: { '$eq': area.trim() } };
-
-// 3. ส่ง Vector และ Filter ไปค้นหาที่ Pinecone
-const queryResult = await pineconeIndex.query({
-    vector: queryVector,
-    topK: 5,
-    filter: pineconeFilter,
-    includeMetadata: true,
-});
-
-// 4. ดึงข้อมูลจากผลลัพธ์
-const relevantDocs = queryResult.matches || [];
+        const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
 
        const context = relevantDocs
     .map((doc) => {
@@ -842,6 +903,18 @@ app.get('/api/manuals', checkAuth, async (req, res) => {
 
 // นำโค้ดนี้ไปวางแทนที่ของเก่า
 
-app.listen(port, () => {
-    console.log(`✅ Backend server is now running on port ${port} and connected to Pinecone.`);
-});
+async function startServer() {
+  await initializeVectorStore(); 
+  
+  if (vectorStore) {
+  // เริ่มการทำงานของเซิร์ฟเวอร์
+  app.listen(port,  () => {
+    console.log(`✅ Backend server is running on port ${port}`);
+  });
+} else {
+  console.error('❌ Server startup failed because the vector store could not be initialized.');
+  process.exit(1);
+}
+}
+
+startServer();
