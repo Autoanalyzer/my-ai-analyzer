@@ -10,13 +10,12 @@ const path = require('path');
 const session = require('express-session');
 
 const {
-  GoogleGenerativeAI,
-  HarmCategory,
-  HarmBlockThreshold,
+ GoogleGenerativeAI,
+ HarmCategory,
+ HarmBlockThreshold,
 } = require('@google/generative-ai');
 const { Pinecone } = require('@pinecone-database/pinecone');
-const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
-
+// (ลบบรรทัดที่ซ้ำออกไปแล้ว)
 // ลบ MemoryVectorStore, RecursiveCharacterTextSplitter, PDFLoader ออก
 // เพราะเราไม่ต้องสร้าง Vector Store เองใน Server อีกต่อไป
 const app = express();
