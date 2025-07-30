@@ -50,6 +50,10 @@ app.use(express.json());
 
 app.use((req, res, next) => {
     console.log(`[DEBUG] Incoming Request: ${req.method} ${req.originalUrl}`);
+    // ✨ เพิ่ม debug สำหรับ PDF requests
+    if (req.originalUrl.includes('.pdf')) {
+        console.log(`[DEBUG] PDF Request detected: ${req.originalUrl}`);
+    }
     next();
 });
 
@@ -109,6 +113,8 @@ app.get('/manuals.html', checkAuth, (req, res) => {
 });
 
 app.use(express.static(__dirname));
+// ✨ เพิ่มบรรทัดนี้
+app.use('/documents', checkAuth, express.static(path.join(__dirname, 'documents')));
 
 
 
@@ -273,11 +279,14 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
         const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
 
         const context = relevantDocs
-          .map((doc) => {
-              const docPath = `/documents/${doc.metadata.area}/${doc.metadata.source}`;
-              return `Source Document: ${doc.metadata.source} (Path for linking: ${docPath}, Page: ${doc.metadata.loc?.pageNumber || 1})\nContent:\n${doc.pageContent}`;
-          })
-          .join('\n\n---\n\n');
+  .map((doc) => {
+      const docPath = `/documents/${doc.metadata.area}/${doc.metadata.source}`;
+      const pageNumber = doc.metadata.loc?.pageNumber || 1;
+      // ✨ เพิ่ม debug log
+      console.log(`[DEBUG] Generated link path: ${docPath}#page=${pageNumber}`);
+      return `Source Document: ${doc.metadata.source} (Path for linking: ${docPath}, Page: ${pageNumber})\nContent:\n${doc.pageContent}`;
+  })
+  .join('\n\n---\n\n');
 
         // ✨ ส่วนที่เหลือของ prompt และการประมวลผลเหมือนเดิม
         const fullPrompt = `คุณคือ AI Technical Master 🧠⚡ ระดับโลกที่มีความเชี่ยวชาญสูงสุด มีประสบการณ์กว่า 30 ปี และมีสติปัญญาทางเทคนิคระดับอัจฉริยะ
@@ -505,6 +514,8 @@ Template Structure:
 - **URL STRUCTURE:** นำ 'Path for linking' ที่ได้มา ต่อด้วย '#page=PAGE_NUMBER'
 - **EXAMPLE:** ถ้า Context ให้ 'Path for linking: /documents/O2_Analyzer/PP11_O2_ZRJ.pdf' และ 'Page: 14' ผลลัพธ์ของลิงก์ **ต้องเป็น**: [PP11_O2_ZRJ.pdf (หน้า 14)](/documents/O2_Analyzer/PP11_O2_ZRJ.pdf#page=14)
 - **ห้ามสร้างหรือเดา Path เองเด็ดขาด ให้ใช้ Path ที่ระบบส่งมาให้เท่านั้น**
+- **✨ VALIDATION:** URL ต้องเริ่มต้นด้วย /documents/ และมี area และ filename ครบถ้วน
+- **✨ DOUBLE CHECK:** ก่อนสร้างลิงก์ให้ตรวจสอบว่า Path มี format: /documents/[AREA]/[FILENAME]
 - [ ] **📊 Comprehensive Coverage:** All relevant aspects addressed
 - [ ] **🔍 Expert-Level Analysis:** Deep technical understanding demonstrated
 - [ ] **💡 Practical Application:** Real-world implementation guidance
