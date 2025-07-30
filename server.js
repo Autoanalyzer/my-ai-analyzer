@@ -109,6 +109,8 @@ app.get('/manuals.html', checkAuth, (req, res) => {
 });
 
 app.use(express.static(__dirname));
+// เพิ่มบรรทัดนี้
+app.use('/documents', express.static(path.join(__dirname, 'documents')));
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -716,3 +718,4 @@ async function startServer() {
 }
 
 startServer();
+
