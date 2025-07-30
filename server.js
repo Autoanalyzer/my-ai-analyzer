@@ -262,15 +262,35 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
         }
 
         // ✨ สำหรับ Pinecone จะใช้ metadata filter แบบใหม่
-        let filter = {};
-        if (manual && manual !== 'all') {
-            filter.source = manual.trim();
-        } else if (area) {
-            filter.area = area.trim();
-        }
+       let filter;
+if (manual && manual !== 'all') {
+    // ✨ เพิ่มบรรทัดเหล่านี้
+    console.log('🎯 Looking for manual:', manual);
+    const manualFileName = manual.toLowerCase().replace(/\s+/g, '_');
+    console.log('🔍 Converted to filename pattern:', manualFileName);
+    
+    filter = (doc) => {
+        const sourceFile = doc.metadata.source.toLowerCase();
+        const isMatch = sourceFile.includes(manualFileName) || 
+                       sourceFile.includes(manual.toLowerCase()) ||
+                       sourceFile === manual.trim();
+        
+        console.log(`📄 Checking: ${sourceFile} against ${manual} -> ${isMatch}`);
+        return isMatch;
+    };
+} else if (area) {
+    filter = (doc) => doc.metadata.area === area.trim();
+}
 
         // ✨ ใช้ similaritySearch ของ Pinecone (syntax เหมือนเดิม)
         const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
+
+// ✨ เพิ่มบรรทัดเหล่านี้
+console.log('📚 Found documents:', relevantDocs.map(doc => ({
+    source: doc.metadata.source,
+    area: doc.metadata.area,
+    page: doc.metadata.loc?.pageNumber
+})));
 
         const context = relevantDocs
           .map((doc) => {
@@ -672,7 +692,7 @@ app.get('/api/manuals', checkAuth, async (req, res) => {
                 files: files.map((fileName) => {
                     const trimmedFileName = fileName.trim();
                     const fileBaseName = path.parse(trimmedFileName).name;
-                   
+                    console.log(`📁 Area: ${area}, FileName: ${trimmedFileName}, DisplayName: ${displayName}`);
                     const prefix = `${area.trim()}_`;
                     let nameWithoutPrefix = fileBaseName;
                     if (fileBaseName.startsWith(prefix)) {
@@ -716,6 +736,42 @@ async function startServer() {
     process.exit(1);
   }
 }
-
+app.get('/api/debug/documents', checkAuth, async (req, res) => {
+    try {
+        if (!vectorStore) {
+            return res.status(503).json({ error: 'Vector store not ready' });
+        }
+        
+        const allDocs = await vectorStore.similaritySearch('', 50);
+        
+        const docSummary = allDocs.map(doc => ({
+            source: doc.metadata.source,
+            area: doc.metadata.area,
+            page: doc.metadata.loc?.pageNumber,
+            contentPreview: doc.pageContent.substring(0, 100) + '...'
+        }));
+        
+        const groupedDocs = docSummary.reduce((acc, doc) => {
+            if (!acc[doc.area]) {
+                acc[doc.area] = {};
+            }
+            if (!acc[doc.area][doc.source]) {
+                acc[doc.area][doc.source] = [];
+            }
+            acc[doc.area][doc.source].push(doc);
+            return acc;
+        }, {});
+        
+        res.json({
+            totalDocuments: allDocs.length,
+            documentsByArea: groupedDocs,
+            rawDocuments: docSummary
+        });
+        
+    } catch (error) {
+        console.error('Error in debug endpoint:', error);
+        res.status(500).json({ error: 'Debug failed' });
+    }
+});
 startServer();
 
