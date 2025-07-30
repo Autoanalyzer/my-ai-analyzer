@@ -262,15 +262,26 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
         }
 
         // ✨ สำหรับ Pinecone จะใช้ metadata filter แบบใหม่
-        let filter = {};
-        if (manual && manual !== 'all') {
-            filter.source = manual.trim();
-        } else if (area) {
-            filter.area = area.trim();
-        }
+       // ตรรกะใหม่
+// --- 1. หาไฟล์ที่ใช่ก่อน (ถ้าผู้ใช้ไม่ได้เลือกมา) ---
+let finalManualToSearch = manual;
+if (!finalManualToSearch || finalManualToSearch === 'all') {
+    // (ส่วนนี้จะเรียก AI ให้ช่วยหาชื่อไฟล์ที่ตรงกับคำถามที่สุด)
+    const foundManualName = await findMostRelevantManual(question, allManualsForSearch);
+    if (foundManualName) {
+        finalManualToSearch = foundManualName; // ได้ชื่อไฟล์ที่ถูกต้องมาแล้ว
+    }
+}
 
-        // ✨ ใช้ similaritySearch ของ Pinecone (syntax เหมือนเดิม)
-        const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
+// --- 2. สร้าง Filter ที่ตรงเป้า ---
+let filter = {};
+if (finalManualToSearch && finalManualToSearch !== 'all') {
+    // ใช้ชื่อไฟล์ที่หาเจอ มาสร้าง filter ที่เฉพาะเจาะจง
+    filter.source = finalManualToSearch.trim();
+}
+
+// --- 3. ค้นหาคำตอบในไฟล์ที่ถูกต้องเท่านั้น ---
+const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
 
         const context = relevantDocs
           .map((doc) => {
