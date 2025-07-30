@@ -1,4 +1,4 @@
-// server.js (Modified for Pinecone Integration)
+// server.js (Fixed for proper link generation and filtering)
 
 require('dotenv').config();
 
@@ -16,17 +16,15 @@ const {
   HarmBlockThreshold,
 } = require('@google/generative-ai');
 const { GoogleGenerativeAIEmbeddings } = require('@langchain/google-genai');
-// ✨ เปลี่ยนจาก MemoryVectorStore เป็น PineconeStore
 const { PineconeStore } = require('@langchain/pinecone');
 const { RecursiveCharacterTextSplitter } = require('langchain/text_splitter');
 const { PDFLoader } = require('langchain/document_loaders/fs/pdf');
-// ✨ เพิ่ม Pinecone import
 const { Pinecone } = require('@pinecone-database/pinecone');
 
 const app = express();
 const port = process.env.PORT || 5500;
 
-// --- 2. ตั้งค่า User และ Session ---
+// --- User และ Session Setup ---
 const users = [
     { id: 1, username: 'admin', password: 'password123' },
     { id: 2, username: 'user', password: 'password456' }
@@ -40,24 +38,20 @@ app.use(session({
 }));
 
 const chatHistories = {};
-let vectorStore; // ✨ ยังคงใช้ตัวแปรเดิม แต่จะเป็น PineconeStore แทน
-
-// ✨ ลบ VECTOR_STORE_SAVE_PATH เพราะไม่ต้องบันทึกไฟล์แล้ว
-// const VECTOR_STORE_SAVE_PATH = path.join(__dirname, 'vector_store.json');
+let vectorStore;
 
 app.use(cors());
 app.use(express.json());
 
 app.use((req, res, next) => {
     console.log(`[DEBUG] Incoming Request: ${req.method} ${req.originalUrl}`);
-    // ✨ เพิ่ม debug สำหรับ PDF requests
     if (req.originalUrl.includes('.pdf')) {
         console.log(`[DEBUG] PDF Request detected: ${req.originalUrl}`);
     }
     next();
 });
 
-// --- 1. เพิ่ม Middleware สำหรับตรวจสอบการ Login ---
+// --- Authentication Middleware ---
 const checkAuth = (req, res, next) => {
     console.log('[DEBUG] --- Running checkAuth ---');
     console.log('[DEBUG] Session ID:', req.session.id);
@@ -72,7 +66,7 @@ const checkAuth = (req, res, next) => {
     next();
 };
 
-// --- 2. สร้าง Endpoint สำหรับ Login และ Logout ---
+// --- Login/Logout Routes ---
 app.post('/login', (req, res) => {
     const { username, password } = req.body;
     const user = users.find(u => u.username === username && u.password === password);
@@ -96,6 +90,7 @@ app.get('/logout', (req, res) => {
     });
 });
 
+// --- Static Routes ---
 app.get('/', checkAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -113,10 +108,7 @@ app.get('/manuals.html', checkAuth, (req, res) => {
 });
 
 app.use(express.static(__dirname));
-// ✨ เพิ่มบรรทัดนี้
 app.use('/documents', checkAuth, express.static(path.join(__dirname, 'documents')));
-
-
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -137,32 +129,26 @@ const embeddingsModel = new GoogleGenerativeAIEmbeddings({
   model: 'text-embedding-004',
 });
 
-// ✨ แก้ไข initializeVectorStore ให้ใช้ Pinecone
 async function initializeVectorStore() {
   try {
     console.log('🔧 Initializing Pinecone connection...');
     
-    // ✨ สร้าง Pinecone client
     const pinecone = new Pinecone({
       apiKey: process.env.PINECONE_API_KEY,
     });
 
-    // ✨ เชื่อมต่อกับ Index
     const index = pinecone.Index(process.env.PINECONE_INDEX_NAME);
 
-    // ✨ สร้าง PineconeStore
     vectorStore = new PineconeStore(embeddingsModel, {
       pineconeIndex: index,
-      maxConcurrency: 5, // Maximum number of batch requests to allow at once
+      maxConcurrency: 5,
     });
 
     console.log('✅ Pinecone vector store initialized successfully.');
 
-    // ✨ ตรวจสอบว่ามีข้อมูลใน Index หรือไม่
     const stats = await index.describeIndexStats();
     console.log(`📊 Current index stats:`, stats);
 
-    // ✨ ถ้ายังไม่มีข้อมูล ให้โหลดเอกสารใหม่
     if (stats.totalRecordCount === 0) {
       console.log('📚 Index is empty. Loading documents...');
       await loadDocumentsIntoPinecone();
@@ -176,7 +162,7 @@ async function initializeVectorStore() {
   }
 }
 
-// ✨ ฟังก์ชันใหม่สำหรับโหลดเอกสารเข้า Pinecone
+// ✨ แก้ไขการโหลดเอกสาร - เพิ่ม metadata ที่ละเอียดขึ้น
 async function loadDocumentsIntoPinecone() {
   try {
     const documentsBasePath = path.join(__dirname, 'documents');
@@ -189,6 +175,7 @@ async function loadDocumentsIntoPinecone() {
     for (const area of areaFolders) {
       const areaPath = path.join(documentsBasePath, area);
       const files = await fs.readdir(areaPath);
+      
       for (const file of files) {
         const filePath = path.join(areaPath, file);
         const fileExt = path.extname(file).toLowerCase();
@@ -203,10 +190,25 @@ async function loadDocumentsIntoPinecone() {
             docsFromFile.push({ pageContent: textContent, metadata: {} });
           }
 
+          // ✨ ปรับปรุง metadata ให้มีข้อมูลครบถ้วน
           docsFromFile.forEach(doc => {
             doc.metadata.source = file.trim();
             doc.metadata.area = area.trim();
+            doc.metadata.fullPath = `/documents/${area.trim()}/${file.trim()}`;
+            
+            // เพิ่ม searchable fields
+            const fileBaseName = path.parse(file).name.toLowerCase();
+            doc.metadata.searchName = fileBaseName;
+            doc.metadata.displayName = fileBaseName.replace(/_/g, ' ').replace(/-/g, ' ');
+            
+            console.log(`[DEBUG] Loading document with metadata:`, {
+              source: doc.metadata.source,
+              area: doc.metadata.area,
+              fullPath: doc.metadata.fullPath,
+              searchName: doc.metadata.searchName
+            });
           });
+          
           allDocuments.push(...docsFromFile);
 
         } catch (fileError) {
@@ -223,14 +225,12 @@ async function loadDocumentsIntoPinecone() {
 
     console.log(`📤 Uploading ${splitDocs.length} document chunks to Pinecone...`);
     
-    // ✨ อัปโหลดเอกสารไปยัง Pinecone
     const batchSize = 50;
     for (let i = 0; i < splitDocs.length; i += batchSize) {
       const batch = splitDocs.slice(i, i + batchSize);
       await vectorStore.addDocuments(batch);
       console.log(`📤 Uploaded batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(splitDocs.length / batchSize)}...`);
       
-      // รอเล็กน้อยเพื่อไม่ให้ทำงานหนักเกินไป
       if (i + batchSize < splitDocs.length) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
@@ -244,11 +244,18 @@ async function loadDocumentsIntoPinecone() {
   }
 }
 
-// ✨ แก้ไข /chat endpoint (ส่วนใหญ่เหมือนเดิม แต่ลบการใช้ filter แบบเก่า)
+// ✨ แก้ไข chat endpoint - ปรับปรุงการ filter และ link generation
 app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
     try {
-        let { sessionId, question, manual, area } = req.body;
+        let { sessionId, question, manual, area, device } = req.body;
         const imageFile = req.file;
+
+        console.log('[DEBUG] Chat request received with params:', {
+            manual: manual,
+            area: area,
+            device: device,
+            question: question?.substring(0, 100) + '...'
+        });
 
         if (!sessionId) {
             sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
@@ -267,28 +274,78 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
             return res.status(503).json({ error: 'AI knowledge base is not ready. Please wait.' });
         }
 
-        // ✨ สำหรับ Pinecone จะใช้ metadata filter แบบใหม่
+        // ✨ ปรับปรุงการสร้าง filter - รองรับหลายรูปแบบ
         let filter = {};
-        if (manual && manual !== 'all') {
+        
+        // ตรวจสอบ device parameter ก่อน (จาก URL parameter)
+        if (device) {
+            console.log(`[DEBUG] Using device filter: ${device}`);
+            // ค้นหาจาก searchName หรือ displayName
+            filter.$or = [
+                { searchName: { $regex: device.toLowerCase() } },
+                { displayName: { $regex: device.toLowerCase(), $options: 'i' } },
+                { source: { $regex: device, $options: 'i' } }
+            ];
+        }
+        // ถ้าไม่มี device ให้ใช้ manual
+        else if (manual && manual !== 'all') {
+            console.log(`[DEBUG] Using manual filter: ${manual}`);
             filter.source = manual.trim();
-        } else if (area) {
+        }
+        // ถ้าไม่มี manual ให้ใช้ area
+        else if (area) {
+            console.log(`[DEBUG] Using area filter: ${area}`);
             filter.area = area.trim();
         }
 
-        // ✨ ใช้ similaritySearch ของ Pinecone (syntax เหมือนเดิม)
-        const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
+        console.log('[DEBUG] Final filter:', JSON.stringify(filter, null, 2));
 
+        // ✨ ปรับปรุงการค้นหา - ใช้ filter ที่ซับซ้อนขึ้น
+        let relevantDocs;
+        if (Object.keys(filter).length > 0) {
+            // สำหรับ Pinecone ที่อาจไม่รองรับ complex filter ให้ค้นหาแบบง่าย
+            if (device) {
+                // ค้นหาโดยใช้ keyword ในเนื้อหาแทน
+                const deviceQuery = `${question} ${device}`;
+                relevantDocs = await vectorStore.similaritySearch(deviceQuery, 8);
+                
+                // กรองผลลัพธ์เพิ่มเติมใน JavaScript
+                relevantDocs = relevantDocs.filter(doc => {
+                    const searchName = doc.metadata.searchName || '';
+                    const source = doc.metadata.source || '';
+                    const deviceLower = device.toLowerCase();
+                    
+                    return searchName.includes(deviceLower) || 
+                           source.toLowerCase().includes(deviceLower);
+                });
+            } else {
+                relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
+            }
+        } else {
+            relevantDocs = await vectorStore.similaritySearch(question, 4);
+        }
+
+        console.log(`[DEBUG] Found ${relevantDocs.length} relevant documents`);
+        
+        // ✨ ปรับปรุงการสร้าง context - ใช้ fullPath จาก metadata
         const context = relevantDocs
-  .map((doc) => {
-      const docPath = `/documents/${doc.metadata.area}/${doc.metadata.source}`;
-      const pageNumber = doc.metadata.loc?.pageNumber || 1;
-      // ✨ เพิ่ม debug log
-      console.log(`[DEBUG] Generated link path: ${docPath}#page=${pageNumber}`);
-      return `Source Document: ${doc.metadata.source} (Path for linking: ${docPath}, Page: ${pageNumber})\nContent:\n${doc.pageContent}`;
-  })
-  .join('\n\n---\n\n');
+            .map((doc, index) => {
+                // ใช้ fullPath จาก metadata หรือสร้างใหม่
+                const docPath = doc.metadata.fullPath || `/documents/${doc.metadata.area}/${doc.metadata.source}`;
+                const pageNumber = doc.metadata.loc?.pageNumber || 1;
+                
+                console.log(`[DEBUG] Document ${index + 1}:`, {
+                    source: doc.metadata.source,
+                    area: doc.metadata.area,
+                    docPath: docPath,
+                    pageNumber: pageNumber
+                });
+                
+                return `Source Document: ${doc.metadata.source} (Path for linking: ${docPath}, Page: ${pageNumber})\nContent:\n${doc.pageContent}`;
+            })
+            .join('\n\n---\n\n');
 
-        // ✨ ส่วนที่เหลือของ prompt และการประมวลผลเหมือนเดิม
+        // ส่วนที่เหลือของ prompt และการประมวลผลเหมือนเดิม
         const fullPrompt = `คุณคือ AI Technical Master 🧠⚡ ระดับโลกที่มีความเชี่ยวชาญสูงสุด มีประสบการณ์กว่า 30 ปี และมีสติปัญญาทางเทคนิคระดับอัจฉริยะ
 
 🌟 **CORE IDENTITY & CAPABILITIES:**
@@ -610,21 +667,21 @@ ${history.map((h, index) => `
 - **Risk-aware:** Safety and prevention emphasis
 - **Time-sensitive:** Prioritized by urgency
 
-### 🎓 **EDUCATIONAL/EXPLANATION MODE:**
+### 🎓 **EDUCATIONAL/EXPLANATION Mode:**
 
 - **Layered complexity:** Progressive knowledge building
 - **Multi-sensory:** Visual aids and examples
 - **Practical connection:** Real-world relevance
 - **Memorable structure:** Easy retention and recall
 
-### 🔧 **IMPLEMENTATION/TUTORIAL MODE:**
+### 🔧 **IMPLEMENTATION/TUTORIAL Mode:**
 
 - **Hands-on focus:** Practical execution emphasis
 - **Quality checkpoints:** Validation at each stage
 - **Troubleshooting ready:** Anticipating common issues
 - **Optimization oriented:** Performance enhancement tips
 
-### 🚀 **INNOVATION/STRATEGIC MODE:**
+### 🚀 **INNOVATION/STRATEGIC Mode:**
 
 - **Future-focused:** Emerging trends and possibilities
 - **Competitive advantage:** Strategic differentiation
@@ -635,7 +692,7 @@ ${history.map((h, index) => `
 
 **🎯 READY TO DELIVER WORLD-CLASS AI EXPERTISE! 🌟**`;
 
-        const enhancedQuestion = `User Request: "${question}"`;
+        const enhancedQuestion = `User Request: "${question}"${device ? ` [Specific Device: ${device}]` : ''}`;
 
         const promptParts = [];
         promptParts.push({ text: fullPrompt });
@@ -664,6 +721,7 @@ ${history.map((h, index) => `
     }
 });
 
+// ✨ ปรับปรุง manuals API - เพิ่ม metadata สำหรับการค้นหา
 app.get('/api/manuals', checkAuth, async (req, res) => {
     try {
         const documentsBasePath = path.join(__dirname, 'documents');
@@ -700,7 +758,14 @@ app.get('/api/manuals', checkAuth, async (req, res) => {
                         name: trimmedFileName,
                         path: `documents/${area.trim()}/${trimmedFileName}`,
                         displayName,
-                        image: imagePath
+                        image: imagePath,
+                        // ✨ เพิ่ม search metadata
+                        searchName: nameWithoutPrefix.toLowerCase(),
+                        searchKeywords: [
+                            nameWithoutPrefix.toLowerCase(),
+                            displayName.toLowerCase(),
+                            fileBaseName.toLowerCase()
+                        ]
                     };
                 }),
             };
@@ -713,7 +778,17 @@ app.get('/api/manuals', checkAuth, async (req, res) => {
     }
 });
 
-// ✨ แก้ไข startServer function
+// ✨ เพิ่ม endpoint สำหรับรับ device parameter จาก URL
+app.get('/manuals.html', checkAuth, (req, res) => {
+    // ดึง device parameter จาก query string
+    const device = req.query.device;
+    
+    console.log(`[DEBUG] Manuals page accessed with device: ${device}`);
+    
+    // ส่งไฟล์ HTML (device parameter จะถูกจัดการใน frontend JavaScript)
+    res.sendFile(path.join(__dirname, 'manuals.html'));
+});
+
 async function startServer() {
   await initializeVectorStore();
  
@@ -729,4 +804,3 @@ async function startServer() {
 }
 
 startServer();
-
