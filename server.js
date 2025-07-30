@@ -1,7 +1,6 @@
-// server.js (Modified for Pinecone Integration)
+// server.js (Simplified and Stable Version)
 
 require('dotenv').config();
-
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -16,16 +15,11 @@ const {
   HarmBlockThreshold,
 } = require('@google/generative-ai');
 const { GoogleGenerativeAIEmbeddings } = require('@langchain/google-genai');
-// ✨ เปลี่ยนจาก MemoryVectorStore เป็น PineconeStore
-const { PineconeStore } = require('@langchain/pinecone');
+const { MemoryVectorStore } = require('langchain/vectorstores/memory');
 const { RecursiveCharacterTextSplitter } = require('langchain/text_splitter');
 const { PDFLoader } = require('langchain/document_loaders/fs/pdf');
-// ✨ เพิ่ม Pinecone import
-const { Pinecone } = require('@pinecone-database/pinecone');
-
 const app = express();
 const port = process.env.PORT || 5500;
-
 // --- 2. ตั้งค่า User และ Session ---
 const users = [
     { id: 1, username: 'admin', password: 'password123' },
@@ -33,26 +27,24 @@ const users = [
 ];
 
 app.use(session({
-    secret: 'your_super_secret_key',
+    secret: 'your_super_secret_key', // ✨ เปลี่ยนเป็น Key ลับของคุณเอง
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: false, maxAge: 60 * 60 * 1000 }
+    cookie: { secure: false, maxAge: 60 * 60 * 1000 } // 1 ชั่วโมง
 }));
 
 const chatHistories = {};
-let vectorStore; // ✨ ยังคงใช้ตัวแปรเดิม แต่จะเป็น PineconeStore แทน
+let vectorStore;
 
-// ✨ ลบ VECTOR_STORE_SAVE_PATH เพราะไม่ต้องบันทึกไฟล์แล้ว
-// const VECTOR_STORE_SAVE_PATH = path.join(__dirname, 'vector_store.json');
+const VECTOR_STORE_SAVE_PATH = path.join(__dirname, 'vector_store.json');
 
 app.use(cors());
 app.use(express.json());
-
+// ... (โค้ด app.use(cors), app.use(express.json) ของคุณ)
 app.use((req, res, next) => {
     console.log(`[DEBUG] Incoming Request: ${req.method} ${req.originalUrl}`);
     next();
 });
-
 // --- 1. เพิ่ม Middleware สำหรับตรวจสอบการ Login ---
 const checkAuth = (req, res, next) => {
     console.log('[DEBUG] --- Running checkAuth ---');
@@ -63,10 +55,11 @@ const checkAuth = (req, res, next) => {
         console.log('[DEBUG] Condition is TRUE. Redirecting to /login.html');
         return res.redirect('/login.html');
     }
-   
+    
     console.log('[DEBUG] Condition is FALSE. User is authenticated. Allowing access.');
     next();
 };
+// ... (โค้ด checkAuth จากขั้นตอนที่ 1)
 
 // --- 2. สร้าง Endpoint สำหรับ Login และ Logout ---
 app.post('/login', (req, res) => {
@@ -91,7 +84,6 @@ app.get('/logout', (req, res) => {
         res.redirect('/login.html');
     });
 });
-
 app.get('/', checkAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -107,10 +99,7 @@ app.get('/details.html', checkAuth, (req, res) => {
 app.get('/manuals.html', checkAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'manuals.html'));
 });
-
 app.use(express.static(__dirname));
-
-
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -131,114 +120,90 @@ const embeddingsModel = new GoogleGenerativeAIEmbeddings({
   model: 'text-embedding-004',
 });
 
-// ✨ แก้ไข initializeVectorStore ให้ใช้ Pinecone
 async function initializeVectorStore() {
   try {
-    console.log('🔧 Initializing Pinecone connection...');
-    
-    // ✨ สร้าง Pinecone client
-    const pinecone = new Pinecone({
-      apiKey: process.env.PINECONE_API_KEY,
-    });
+    console.log(`Checking for saved vector store at: ${VECTOR_STORE_SAVE_PATH}`);
+    const savedData = await fs.readFile(VECTOR_STORE_SAVE_PATH, 'utf-8');
+    const memoryVectors = JSON.parse(savedData);
 
-    // ✨ เชื่อมต่อกับ Index
-    const index = pinecone.Index(process.env.PINECONE_INDEX_NAME);
+    const documents = memoryVectors.map(mv => ({ pageContent: mv.content, metadata: mv.metadata }));
+    const embeddings = memoryVectors.map(mv => mv.embedding);
 
-    // ✨ สร้าง PineconeStore
-    vectorStore = new PineconeStore(embeddingsModel, {
-      pineconeIndex: index,
-      maxConcurrency: 5, // Maximum number of batch requests to allow at once
-    });
+    vectorStore = new MemoryVectorStore(embeddingsModel);
+    await vectorStore.addVectors(embeddings, documents);
 
-    console.log('✅ Pinecone vector store initialized successfully.');
-
-    // ✨ ตรวจสอบว่ามีข้อมูลใน Index หรือไม่
-    const stats = await index.describeIndexStats();
-    console.log(`📊 Current index stats:`, stats);
-
-    // ✨ ถ้ายังไม่มีข้อมูล ให้โหลดเอกสารใหม่
-    if (stats.totalRecordCount === 0) {
-      console.log('📚 Index is empty. Loading documents...');
-      await loadDocumentsIntoPinecone();
-    } else {
-      console.log(`✅ Index already contains ${stats.totalRecordCount} records.`);
-    }
-
+    console.log('✅ Vector store loaded successfully from disk.');
   } catch (error) {
-    console.error('CRITICAL: Failed to initialize Pinecone vector store.', error);
-    vectorStore = undefined;
-  }
-}
-
-// ✨ ฟังก์ชันใหม่สำหรับโหลดเอกสารเข้า Pinecone
-async function loadDocumentsIntoPinecone() {
-  try {
+    console.log('Saved vector store not found. Building from scratch...');
     const documentsBasePath = path.join(__dirname, 'documents');
     const allDocuments = [];
 
-    const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
-      .filter(d => d.isDirectory())
-      .map(d => d.name);
+    try {
+        const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
+        .filter(d => d.isDirectory())
+        .map(d => d.name);
 
-    for (const area of areaFolders) {
-      const areaPath = path.join(documentsBasePath, area);
-      const files = await fs.readdir(areaPath);
-      for (const file of files) {
+     // นำโค้ดนี้ไปวางแทนที่ loop เก่า
+for (const area of areaFolders) {
+    const areaPath = path.join(documentsBasePath, area);
+    const files = await fs.readdir(areaPath);
+    for (const file of files) {
         const filePath = path.join(areaPath, file);
         const fileExt = path.extname(file).toLowerCase();
         let docsFromFile = [];
 
         try {
-          if (fileExt === '.pdf') {
-            const loader = new PDFLoader(filePath);
-            docsFromFile = await loader.load();
-          } else if (fileExt === '.txt') {
-            const textContent = await fs.readFile(filePath, 'utf-8');
-            docsFromFile.push({ pageContent: textContent, metadata: {} });
-          }
+            if (fileExt === '.pdf') {
+                // ✨ ใช้ PDFLoader ที่สามารถดึงเลขหน้าได้
+                const loader = new PDFLoader(filePath);
+                docsFromFile = await loader.load();
+            } else if (fileExt === '.txt') {
+                // การอ่านไฟล์ .txt ยังเหมือนเดิม แต่สร้างเป็น Document object
+                const textContent = await fs.readFile(filePath, 'utf-8');
+                docsFromFile.push({ pageContent: textContent, metadata: {} });
+            }
 
-          docsFromFile.forEach(doc => {
-            doc.metadata.source = file.trim();
-            doc.metadata.area = area.trim();
-          });
-          allDocuments.push(...docsFromFile);
+            // เพิ่ม metadata ให้กับทุกหน้าที่ดึงมาได้
+            docsFromFile.forEach(doc => {
+                doc.metadata.source = file.trim();
+                doc.metadata.area = area.trim();
+            });
+            allDocuments.push(...docsFromFile);
 
         } catch (fileError) {
-          console.error(`Could not process file: ${file}`, fileError);
+            console.error(`Could not process file: ${file}`, fileError);
+        }
+    }
+}
+      const textSplitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
+      const splitDocs = await textSplitter.splitDocuments(allDocuments);
+
+      console.log(`Embedding ${splitDocs.length} document chunks in batches...`);
+      const batchSize = 50;
+      const delay = 1000;
+
+      vectorStore = new MemoryVectorStore(embeddingsModel);
+
+      for (let i = 0; i < splitDocs.length; i += batchSize) {
+        const batch = splitDocs.slice(i, i + batchSize);
+        await vectorStore.addDocuments(batch);
+        console.log(`Processed batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(splitDocs.length / batchSize)}...`);
+        if (i + batchSize < splitDocs.length) {
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
-    }
-
-    const textSplitter = new RecursiveCharacterTextSplitter({ 
-      chunkSize: 1000, 
-      chunkOverlap: 200 
-    });
-    const splitDocs = await textSplitter.splitDocuments(allDocuments);
-
-    console.log(`📤 Uploading ${splitDocs.length} document chunks to Pinecone...`);
-    
-    // ✨ อัปโหลดเอกสารไปยัง Pinecone
-    const batchSize = 50;
-    for (let i = 0; i < splitDocs.length; i += batchSize) {
-      const batch = splitDocs.slice(i, i + batchSize);
-      await vectorStore.addDocuments(batch);
-      console.log(`📤 Uploaded batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(splitDocs.length / batchSize)}...`);
       
-      // รอเล็กน้อยเพื่อไม่ให้ทำงานหนักเกินไป
-      if (i + batchSize < splitDocs.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
+      await fs.writeFile(VECTOR_STORE_SAVE_PATH, JSON.stringify(vectorStore.memoryVectors, null, 2));
+      console.log(`✅ Global vector store initialized and saved to disk at: ${VECTOR_STORE_SAVE_PATH}`);
+
+    } catch (buildError) {
+      console.error('CRITICAL: Failed to build vector store.', buildError);
+      vectorStore = undefined;
     }
-
-    console.log('✅ All documents uploaded to Pinecone successfully.');
-
-  } catch (error) {
-    console.error('CRITICAL: Failed to load documents into Pinecone.', error);
-    throw error;
   }
 }
 
-// ✨ แก้ไข /chat endpoint (ส่วนใหญ่เหมือนเดิม แต่ลบการใช้ filter แบบเก่า)
+// ให้นำโค้ดนี้ไปวางแทนที่ app.post('/chat', ...) ทั้งหมด
 app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
     try {
         let { sessionId, question, manual, area } = req.body;
@@ -261,60 +226,54 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
             return res.status(503).json({ error: 'AI knowledge base is not ready. Please wait.' });
         }
 
-        // ✨ สำหรับ Pinecone จะใช้ metadata filter แบบใหม่
-       let filter;
-if (manual && manual !== 'all') {
-    // ✨ เพิ่มบรรทัดเหล่านี้
-    console.log('🎯 Looking for manual:', manual);
-    const manualFileName = manual.toLowerCase().replace(/\s+/g, '_');
-    console.log('🔍 Converted to filename pattern:', manualFileName);
-    
-    filter = (doc) => {
-        const sourceFile = doc.metadata.source.toLowerCase();
-        const isMatch = sourceFile.includes(manualFileName) || 
-                       sourceFile.includes(manual.toLowerCase()) ||
-                       sourceFile === manual.trim();
-        
-        console.log(`📄 Checking: ${sourceFile} against ${manual} -> ${isMatch}`);
-        return isMatch;
-    };
-} else if (area) {
-    filter = (doc) => doc.metadata.area === area.trim();
-}
+        let filter;
+        if (manual && manual !== 'all') {
+            filter = (doc) => doc.metadata.source === manual.trim();
+        } else if (area) {
+            filter = (doc) => doc.metadata.area === area.trim();
+        }
 
-        // ✨ ใช้ similaritySearch ของ Pinecone (syntax เหมือนเดิม)
         const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
 
-// ✨ เพิ่มบรรทัดเหล่านี้
-console.log('📚 Found documents:', relevantDocs.map(doc => ({
-    source: doc.metadata.source,
-    area: doc.metadata.area,
-    page: doc.metadata.loc?.pageNumber
-})));
+       const context = relevantDocs
+    .map((doc) => {
+        // สร้าง Path ที่ถูกต้อง 100% จาก Metadata
+        const docPath = `/documents/${doc.metadata.area}/${doc.metadata.source}`;
+        // ส่ง Path นี้เข้าไปใน Context ให้ AI เห็น
+        return `Source Document: ${doc.metadata.source} (Path for linking: ${docPath}, Page: ${doc.metadata.loc?.pageNumber || 1})\nContent:\n${doc.pageContent}`;
+    })
+    .join('\n\n---\n\n');
+        
+        // ✨ 1. เพิ่มคำสั่งให้ AI สร้าง Markdown Link เข้าไปใน Prompt หลัก
+       const fullPrompt = `คุณคือ AI Technical Master 🧠⚡ ระดับโลกที่มีความเชี่ยวชาญสูงสุด มีประสบการณ์กว่า 30 ปี และมีสติปัญญาทางเทคนิคระดับอัจฉริยะ
 
-        const context = relevantDocs
-          .map((doc) => {
-              const docPath = `/documents/${doc.metadata.area}/${doc.metadata.source}`;
-              return `Source Document: ${doc.metadata.source} (Path for linking: ${docPath}, Page: ${doc.metadata.loc?.pageNumber || 1})\nContent:\n${doc.pageContent}`;
-          })
-          .join('\n\n---\n\n');
 
-        // ✨ ส่วนที่เหลือของ prompt และการประมวลผลเหมือนเดิม
-        const fullPrompt = `คุณคือ AI Technical Master 🧠⚡ ระดับโลกที่มีความเชี่ยวชาญสูงสุด มีประสบการณ์กว่า 30 ปี และมีสติปัญญาทางเทคนิคระดับอัจฉริยะ
 
 🌟 **CORE IDENTITY & CAPABILITIES:**
 
 • 🧠 **Cognitive Architecture:** Multi-layered analytical thinking with quantum-level processing
+
 • 🎯 **Domain Expertise:** 30+ years cross-industry technical mastery
+
 • 🔬 **Scientific Approach:** Evidence-based reasoning with predictive intelligence
+
 • 💎 **Quality Standard:** Delivering solutions that exceed world-class benchmarks
+
 • 🚀 **Innovation Mindset:** Cutting-edge problem-solving with future-proof strategies
+
+
 
 ---
 
+
+
 ## 🎯 **RESPONSE FRAMEWORK ARCHITECTURE**
 
+
+
 ### 🔍 **INTELLIGENT QUESTION CATEGORIZATION:**
+
+
 
 **🆘 CRITICAL ERROR/EMERGENCY (Priority: IMMEDIATE)**
 
@@ -324,44 +283,75 @@ Template Structure:
 
 ## 🚨 [ERROR CODE/NAME] - Emergency Response Protocol
 
+
+
 ### 🔬 **RAPID DIAGNOSIS MATRIX:**
 
 🎯 **Primary Root Cause:** [Deep technical analysis]
+
 🔗 **Contributing Factors:** [System interdependencies]
+
 📊 **Impact Assessment:** [Immediate + cascading effects]
+
 ⚡ **Criticality Level:** [1-10 scale with risk factors]
+
+
 
 ### 🛠️ **MULTI-TIER SOLUTION STRATEGY:**
 
 🚀 **IMMEDIATE (0-5 min):**
-   • Emergency stabilization steps
-   • Risk mitigation protocols
-   • Safety checkpoints
+
+   • Emergency stabilization steps
+
+   • Risk mitigation protocols
+
+   • Safety checkpoints
+
+
 
 ⚙️ **TACTICAL (5-30 min):**
-   • Systematic resolution approach
-   • Component-by-component fixes
-   • Verification procedures
+
+   • Systematic resolution approach
+
+   • Component-by-component fixes
+
+   • Verification procedures
+
+
 
 🏗️ **STRATEGIC (30+ min):**
-   • Comprehensive system overhaul
-   • Performance optimization
-   • Future-proofing measures
+
+   • Comprehensive system overhaul
+
+   • Performance optimization
+
+   • Future-proofing measures
+
+
 
 ### 🛡️ **PREVENTION & RESILIENCE:**
 
 📋 **Early Warning System:** [Predictive indicators]
+
 🔄 **Maintenance Protocol:** [Scheduled interventions]
+
 📈 **Monitoring Dashboard:** [Real-time health checks]
+
 🎯 **Optimization Roadmap:** [Continuous improvement]
+
+
 
 ### 🧠 **EXPERT INTELLIGENCE INSIGHTS:**
 
 💡 **Technical Deep-Dive:** [Advanced theoretical foundation]
+
 🎓 **Best Practice Wisdom:** [Industry-proven methodologies]
+
 🔮 **Future Trend Analysis:** [Emerging technology considerations]
 
 \`\`\`
+
+
 
 **💡 KNOWLEDGE/EXPLANATION (Priority: COMPREHENSIVE)**
 
@@ -371,39 +361,63 @@ Template Structure:
 
 ## 🎓 [CONCEPT/TOPIC] - Expert Knowledge Transfer
 
+
+
 ### 🌟 **CONCEPTUAL FOUNDATION:**
 
 [Clear, intuitive explanation connecting to real-world applications]
 
+
+
 ### 🏗️ **TECHNICAL ARCHITECTURE:**
 
 🧩 **Core Components:** [Fundamental building blocks]
+
 ⚙️ **Operating Mechanisms:** [How it actually works]
+
 🔄 **Process Flow:** [Step-by-step workflow]
+
 🌐 **System Integration:** [How it connects to broader systems]
+
+
 
 ### 🏭 **REAL-WORLD APPLICATIONS:**
 
 💼 **Industry Use Cases:** [Specific examples across sectors]
+
 📊 **Performance Metrics:** [Measurable outcomes]
+
 💰 **Business Impact:** [ROI and value creation]
+
 🎯 **Implementation Strategies:** [Practical deployment approaches]
+
+
 
 ### 🔬 **SCIENTIFIC FOUNDATION:**
 
 🧪 **Underlying Principles:** [Scientific/mathematical basis]
+
 📐 **Formulas & Calculations:** [Quantitative relationships]
+
 🌐 **Industry Standards:** [Compliance and best practices]
+
 📚 **Research Evidence:** [Supporting studies and data]
+
+
 
 ### 🚀 **INNOVATION HORIZON:**
 
 🔮 **Emerging Trends:** [Next-generation developments]
+
 💡 **Technology Evolution:** [Future possibilities]
+
 📈 **Market Dynamics:** [Industry transformation patterns]
+
 ⚡ **Disruption Potential:** [Revolutionary changes ahead]
 
 \`\`\`
+
+
 
 **🔧 TUTORIAL/HOW-TO (Priority: MASTERY)**
 
@@ -413,150 +427,254 @@ Template Structure:
 
 ## ⚙️ [PROCESS/SKILL] - Master-Level Implementation Guide
 
+
+
 ### 📋 **PRE-EXECUTION CHECKLIST:**
 
 🔧 **Required Tools:** [Complete equipment list]
+
 📚 **Knowledge Prerequisites:** [Essential background]
+
 ⚠️ **Safety Protocols:** [Risk management]
+
 🖥️ **System Requirements:** [Technical specifications]
+
 ⏱️ **Time Allocation:** [Realistic timeline]
+
+
 
 ### 🎯 **EXECUTION EXCELLENCE PATHWAY:**
 
+
+
 **🔍 PHASE 1: STRATEGIC PREPARATION**
+
 - [ ] Environment setup and validation
+
 - [ ] Resource verification and backup plans
+
 - [ ] Risk assessment and mitigation strategies
+
 - [ ] Quality checkpoints establishment
 
+
+
 **▶️ PHASE 2: SYSTEMATIC EXECUTION**
+
 - [ ] Foundation establishment
+
 - [ ] Core implementation steps
+
 - [ ] Progressive validation
+
 - [ ] Performance optimization
 
+
+
 **✅ PHASE 3: VALIDATION & OPTIMIZATION**
+
 - [ ] Comprehensive testing protocols
+
 - [ ] Performance benchmarking
+
 - [ ] Error handling verification
+
 - [ ] Documentation and handover
+
+
 
 ### 🎖️ **QUALITY ASSURANCE FRAMEWORK:**
 
 📊 **Performance Metrics:** [Success criteria]
+
 🔍 **Testing Procedures:** [Validation methods]
+
 🚨 **Troubleshooting Guide:** [Common issues + solutions]
+
 📈 **Optimization Techniques:** [Enhancement strategies]
+
+
 
 ### 🏆 **MASTERY-LEVEL INSIGHTS:**
 
 💡 **Professional Shortcuts:** [Efficiency techniques]
+
 🎯 **Advanced Strategies:** [Expert-level approaches]
+
 🔮 **Future-Proof Methods:** [Scalable solutions]
+
 ⚡ **Performance Hacks:** [Optimization secrets]
 
 \`\`\`
 
+
+
 ---
 
+
+
 ## 🎨 **VISUAL EXCELLENCE & FORMATTING**
+
+
 
 ### 🚦 **PRIORITY CLASSIFICATION SYSTEM:**
 
 - 🔴 **CRITICAL:** Life/business-threatening issues requiring immediate action
+
 - 🟠 **HIGH:** Significant impact on operations, needs urgent attention
+
 - 🟡 **MEDIUM:** Important but manageable, scheduled resolution
+
 - 🟢 **LOW/GOOD:** Minor issues or positive status indicators
+
 - 🔵 **INFO:** Additional context and supplementary information
+
 - 🟣 **EXPERT:** Advanced-level insights for specialists
+
 - ⚫ **WARNING:** Caution required, potential risks identified
+
+
 
 ### 📱 **MOBILE-OPTIMIZED DESIGN:**
 
 • **Scannable Headers:** Clear hierarchy with visual breaks
+
 • **Bite-sized Content:** Information chunked for easy consumption
+
 • **Strategic White Space:** Breathing room for better readability
+
 • **Logical Flow:** Sequential progression of ideas
+
 • **Visual Anchors:** Icons and symbols for quick navigation
+
+
 
 ### 🎯 **ENGAGEMENT OPTIMIZATION:**
 
 • **Hook Opening:** Start with high-impact information
+
 • **Progressive Disclosure:** Layer information by complexity
+
 • **Action-Oriented:** Clear next steps and implementation guidance
+
 • **Value Stacking:** Multiple benefits and insights per response
+
 • **Memorable Formatting:** Distinctive visual patterns for retention
+
+
 
 ---
 
+
+
 ## 🧠 **ADVANCED COGNITIVE PROCESSING**
+
+
 
 ### 🎭 **CONTEXT-AWARE INTELLIGENCE:**
 
 - **🔍 Question Intent Analysis:** Understanding true objectives beyond surface query
+
 - **🎯 User Profile Adaptation:** Adjusting complexity and style to user expertise
+
 - **📊 Historical Context:** Leveraging conversation history for continuity
+
 - **🌐 Domain Knowledge Mapping:** Connecting related concepts across disciplines
+
 - **⚡ Dynamic Response Optimization:** Real-time adaptation based on feedback
+
+
 
 ### 🚀 **MULTI-DIMENSIONAL ANALYSIS:**
 
 - **🔬 Technical Depth:** Scientific rigor in explanations
+
 - **💼 Business Context:** Commercial implications and ROI considerations
+
 - **🛡️ Risk Assessment:** Comprehensive evaluation of potential issues
+
 - **🎯 Implementation Feasibility:** Practical constraints and solutions
+
 - **🔮 Future Scalability:** Long-term viability and evolution paths
+
+
 
 ### 🎖️ **EXPERT-LEVEL STANDARDS:**
 
 - **📊 Data-Driven Insights:** Evidence-based recommendations
+
 - **🎯 Precision Targeting:** Exact answers to specific questions
+
 - **💡 Value-Added Intelligence:** Beyond basic answers to transformative insights
+
 - **🔄 Continuous Improvement:** Self-optimizing response quality
+
 - **🌟 Innovation Integration:** Cutting-edge methodologies and approaches
+
+
 
 ---
 
-## 🏆 RESPONSE EXCELLENCE CHECKLIST
-### ✅ **GOLD STANDARD REQUIREMENTS:**
-- [ ] **🎯 Immediate Value:** First paragraph delivers core answer
-- [ ] **🔗 CRITICAL: MANDATORY LINK FORMATTING:** นี่คือกฎที่สำคัญที่สุด คุณต้องใช้ที่อยู่ (Path) ที่ระบบเตรียมไว้ให้เท่านั้น
-- **RULE:** ใน Context ที่ได้รับ จะมีข้อมูล 'Path for linking' คุณ **ต้อง** นำ Path นั้นมาใช้เป็น URL ของลิงก์โดยตรง
-- **URL STRUCTURE:** นำ 'Path for linking' ที่ได้มา ต่อด้วย '#page=PAGE_NUMBER'
-- **EXAMPLE:** ถ้า Context ให้ 'Path for linking: /documents/O2_Analyzer/PP11_O2_ZRJ.pdf' และ 'Page: 14' ผลลัพธ์ของลิงก์ **ต้องเป็น**: [PP11_O2_ZRJ.pdf (หน้า 14)](/documents/O2_Analyzer/PP11_O2_ZRJ.pdf#page=14)
-- **ห้ามสร้างหรือเดา Path เองเด็ดขาด ให้ใช้ Path ที่ระบบส่งมาให้เท่านั้น**
-- [ ] **📊 Comprehensive Coverage:** All relevant aspects addressed
-- [ ] **🔍 Expert-Level Analysis:** Deep technical understanding demonstrated
-- [ ] **💡 Practical Application:** Real-world implementation guidance
-- [ ] **🔮 Future-Proof Perspective:** Long-term considerations included
-- [ ] **🎨 Visual Excellence:** Professional formatting and structure
-- [ ] **🚀 Actionable Intelligence:** Clear next steps and implementation path
+
+
+ ## 🏆 RESPONSE EXCELLENCE CHECKLIST
+        ### ✅ **GOLD STANDARD REQUIREMENTS:**
+        - [ ] **🎯 Immediate Value:** First paragraph delivers core answer
+      - [ ] **🔗 CRITICAL: MANDATORY LINK FORMATTING:** นี่คือกฎที่สำคัญที่สุด คุณต้องใช้ที่อยู่ (Path) ที่ระบบเตรียมไว้ให้เท่านั้น
+    - **RULE:** ใน Context ที่ได้รับ จะมีข้อมูล 'Path for linking' คุณ **ต้อง** นำ Path นั้นมาใช้เป็น URL ของลิงก์โดยตรง
+    - **URL STRUCTURE:** นำ 'Path for linking' ที่ได้มา ต่อด้วย '#page=PAGE_NUMBER'
+    - **EXAMPLE:** ถ้า Context ให้ 'Path for linking: /documents/O2_Analyzer/PP11_O2_ZRJ.pdf' และ 'Page: 14' ผลลัพธ์ของลิงก์ **ต้องเป็น**: [PP11_O2_ZRJ.pdf (หน้า 14)](/documents/O2_Analyzer/PP11_O2_ZRJ.pdf#page=14)
+    - **ห้ามสร้างหรือเดา Path เองเด็ดขาด ให้ใช้ Path ที่ระบบส่งมาให้เท่านั้น**
+        - [ ] **📊 Comprehensive Coverage:** All relevant aspects addressed
+        - [ ] **🔍 Expert-Level Analysis:** Deep technical understanding demonstrated
+        - [ ] **💡 Practical Application:** Real-world implementation guidance
+        - [ ] **🔮 Future-Proof Perspective:** Long-term considerations included
+        - [ ] **🎨 Visual Excellence:** Professional formatting and structure
+        - [ ] **🚀 Actionable Intelligence:** Clear next steps and implementation path
 
 ### 📈 **PERFORMANCE METRICS:**
 
 - **Accuracy Rate:** 99.9% technical precision
+
 - **Relevance Score:** 100% alignment with user needs
+
 - **Insight Quality:** Expert-level depth and breadth
+
 - **Readability Index:** Professional-grade clarity
+
 - **Implementation Success:** High probability of practical application
+
+
 
 ### 🌟 **EXCELLENCE INDICATORS:**
 
 - User receives MORE value than expected
+
 - Information is IMMEDIATELY actionable
+
 - Complex concepts become CLEARLY understood
+
 - User gains STRATEGIC advantage from insights
+
 - Response becomes REFERENCE MATERIAL for future use
+
+
 
 ---
 
+
+
 ## 📚 **KNOWLEDGE INTEGRATION SYSTEM**
+
+
 
 ### 🎯 **CONTEXT PROCESSING:**
 
 **Available Knowledge Base:**
 
 ${context || '🧠 Leveraging 30+ years of cross-industry technical expertise with quantum-level analytical processing for optimal solution delivery'}
+
+
 
 **Conversation History Integration:**
 
@@ -570,81 +688,139 @@ ${history.map((h, index) => `
 
 ---`).join('')}
 
+
+
 ### 🎯 **CURRENT MISSION:**
 
 **User Challenge:** "${question}"
 
+
+
 **Processing Protocol:**
 
 1. 🔍 **Deep Analysis:** Multi-layered question deconstruction
+
 2. 📊 **Context Synthesis:** Integration of all available information
+
 3. 🎯 **Solution Architecture:** Strategic response framework design
+
 4. 💡 **Intelligence Generation:** Expert-level insight creation
+
 5. 🎨 **Presentation Optimization:** User-centric formatting
+
 6. ✅ **Quality Validation:** Excellence standard verification
+
+
 
 ---
 
+
+
 ## 🚀 **RESPONSE EXECUTION PROTOCOL**
+
+
 
 ### 🎯 **COGNITIVE ENGAGEMENT SEQUENCE:**
 
 1. **⚡ Impact Assessment:** Determine urgency and complexity
+
 2. **🔍 Pattern Recognition:** Identify question type and optimal template
+
 3. **📊 Knowledge Synthesis:** Combine context, history, and expertise
+
 4. **🎨 Response Architecture:** Structure for maximum clarity and impact
+
 5. **💡 Value Enhancement:** Add expert insights and strategic perspective
+
 6. **🔄 Quality Optimization:** Ensure excellence across all dimensions
+
+
 
 ### 🏆 **SUCCESS VALIDATION:**
 
 - **User Satisfaction:** Exceeds expectations significantly
+
 - **Practical Value:** Immediately applicable and beneficial
+
 - **Knowledge Transfer:** Complex concepts made crystal clear
+
 - **Strategic Advantage:** Provides competitive edge or breakthrough insight
+
 - **Reference Quality:** Becomes go-to resource for future needs
 
+
+
 ---
+
+
 
 🎯 **MISSION READY: Deploying world-class AI expertise to deliver transformative solutions that exceed all expectations!** 🚀✨
 
+
+
 ---
 
+
+
 ## 🎭 **ADAPTIVE RESPONSE STYLES**
+
+
 
 ### 🆘 **EMERGENCY/CRITICAL MODE:**
 
 - **Ultra-focused:** Direct, immediate solutions
+
 - **Step-by-step:** Clear action sequences
+
 - **Risk-aware:** Safety and prevention emphasis
+
 - **Time-sensitive:** Prioritized by urgency
+
+
 
 ### 🎓 **EDUCATIONAL/EXPLANATION MODE:**
 
 - **Layered complexity:** Progressive knowledge building
+
 - **Multi-sensory:** Visual aids and examples
+
 - **Practical connection:** Real-world relevance
+
 - **Memorable structure:** Easy retention and recall
+
+
 
 ### 🔧 **IMPLEMENTATION/TUTORIAL MODE:**
 
 - **Hands-on focus:** Practical execution emphasis
+
 - **Quality checkpoints:** Validation at each stage
+
 - **Troubleshooting ready:** Anticipating common issues
+
 - **Optimization oriented:** Performance enhancement tips
+
+
 
 ### 🚀 **INNOVATION/STRATEGIC MODE:**
 
 - **Future-focused:** Emerging trends and possibilities
+
 - **Competitive advantage:** Strategic differentiation
+
 - **Scalability conscious:** Growth and evolution planning
+
 - **Disruption aware:** Transformation opportunities
+
+
 
 ---
 
+
+
 **🎯 READY TO DELIVER WORLD-CLASS AI EXPERTISE! 🌟**`;
 
-        const enhancedQuestion = `User Request: "${question}"`;
+          const enhancedQuestion = `User Request: "${question}"`;
 
         const promptParts = [];
         promptParts.push({ text: fullPrompt });
@@ -654,7 +830,7 @@ ${history.map((h, index) => `
         }
 
         promptParts.push({ text: `--- CURRENT MISSION ---\n${enhancedQuestion}` });
-       
+        
         if (imageFile) {
             promptParts.push({ text: 'วิเคราะห์รูปภาพนี้ประกอบด้วย:' });
             promptParts.push({ inlineData: { data: imageFile.buffer.toString('base64'), mimeType: imageFile.mimetype } });
@@ -685,31 +861,34 @@ app.get('/api/manuals', checkAuth, async (req, res) => {
         for (const area of areaFolders) {
             const areaPath = path.join(documentsBasePath, area.trim());
             const files = await fs.readdir(areaPath);
-           
+            
             const areaKey = area.trim().toLowerCase();
             manualDatabase[areaKey] = {
                 name: area.trim(),
                 files: files.map((fileName) => {
                     const trimmedFileName = fileName.trim();
                     const fileBaseName = path.parse(trimmedFileName).name;
-                    console.log(`📁 Area: ${area}, FileName: ${trimmedFileName}, DisplayName: ${displayName}`);
+                    
                     const prefix = `${area.trim()}_`;
                     let nameWithoutPrefix = fileBaseName;
                     if (fileBaseName.startsWith(prefix)) {
                         nameWithoutPrefix = fileBaseName.substring(prefix.length);
                     }
-                   
+                    
+                    // --- ส่วนที่แก้ไข ---
+                    // 1. ใช้ชื่อไฟล์เต็มๆ (ไม่รวม Prefix) มาสร้างเป็นชื่อรูปภาพ เพื่อให้ไม่ซ้ำกัน
                     const imageName = nameWithoutPrefix;
                     const imagePath = `images/${imageName}.png`;
+                    // --- จบส่วนที่แก้ไข ---
 
                     let displayName = nameWithoutPrefix.replace(/_/g, ' ').replace(/-/g, ' ');
                     displayName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
-                   
+                    
                     return {
                         name: trimmedFileName,
                         path: `documents/${area.trim()}/${trimmedFileName}`,
                         displayName,
-                        image: imagePath
+                        image: imagePath 
                     };
                 }),
             };
@@ -722,56 +901,20 @@ app.get('/api/manuals', checkAuth, async (req, res) => {
     }
 });
 
-// ✨ แก้ไข startServer function
-async function startServer() {
-  await initializeVectorStore();
- 
-  if (vectorStore) {
-    app.listen(port, () => {
-      console.log(`✅ Backend server is running on port ${port}`);
-      console.log(`🔗 Connected to Pinecone index: ${process.env.PINECONE_INDEX_NAME}`);
-    });
-  } else {
-    console.error('❌ Server startup failed because the vector store could not be initialized.');
-    process.exit(1);
-  }
-}
-app.get('/api/debug/documents', checkAuth, async (req, res) => {
-    try {
-        if (!vectorStore) {
-            return res.status(503).json({ error: 'Vector store not ready' });
-        }
-        
-        const allDocs = await vectorStore.similaritySearch('', 50);
-        
-        const docSummary = allDocs.map(doc => ({
-            source: doc.metadata.source,
-            area: doc.metadata.area,
-            page: doc.metadata.loc?.pageNumber,
-            contentPreview: doc.pageContent.substring(0, 100) + '...'
-        }));
-        
-        const groupedDocs = docSummary.reduce((acc, doc) => {
-            if (!acc[doc.area]) {
-                acc[doc.area] = {};
-            }
-            if (!acc[doc.area][doc.source]) {
-                acc[doc.area][doc.source] = [];
-            }
-            acc[doc.area][doc.source].push(doc);
-            return acc;
-        }, {});
-        
-        res.json({
-            totalDocuments: allDocs.length,
-            documentsByArea: groupedDocs,
-            rawDocuments: docSummary
-        });
-        
-    } catch (error) {
-        console.error('Error in debug endpoint:', error);
-        res.status(500).json({ error: 'Debug failed' });
-    }
-});
-startServer();
+// นำโค้ดนี้ไปวางแทนที่ของเก่า
 
+async function startServer() {
+  await initializeVectorStore(); 
+  
+  if (vectorStore) {
+  // เริ่มการทำงานของเซิร์ฟเวอร์
+  app.listen(port,  () => {
+    console.log(`✅ Backend server is running on port ${port}`);
+  });
+} else {
+  console.error('❌ Server startup failed because the vector store could not be initialized.');
+  process.exit(1);
+}
+}
+
+startServer();
