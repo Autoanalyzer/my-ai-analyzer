@@ -263,8 +263,10 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
 
         // ✨ สำหรับ Pinecone จะใช้ metadata filter แบบใหม่
         // Filter เป็น "ฟังก์ชัน" ที่ return true/false
+// Filter เป็น "อ็อบเจกต์"
+let filter = {};
 if (manual && manual !== 'all') {
-    filter = (doc) => doc.metadata.source === manual.trim();
+    filter.source = manual.trim();
 }
 
         // ✨ ใช้ similaritySearch ของ Pinecone (syntax เหมือนเดิม)
