@@ -108,6 +108,10 @@ app.get('/manuals.html', checkAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'manuals.html'));
 });
 
+app.use('/documents', checkAuth, express.static(path.join(__dirname, 'documents')));
+
+// 2. ✨ ใช้ express.static สำหรับไฟล์ public อื่นๆ (เช่น login.html, style.css)
+// การวางไว้หลัง app.get ที่มี checkAuth จะทำให้ auth middleware ทำงานก่อน
 app.use(express.static(__dirname));
 
 
@@ -264,13 +268,27 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
         // ✨ สำหรับ Pinecone จะใช้ metadata filter แบบใหม่
         // Filter เป็น "ฟังก์ชัน" ที่ return true/false
 // Filter เป็น "อ็อบเจกต์"
+// server.js (ใน app.post('/chat', ...))
+
+// --- แก้ไขตรงนี้ ---
+
+// สร้าง object สำหรับกรองข้อมูลให้ครอบคลุมทั้ง area และ manual
 let filter = {};
-if (manual && manual !== 'all') {
-    filter.source = manual.trim();
+
+// 1. กรองด้วย 'area' ถ้ามีการส่งค่ามา
+if (req.body.area && req.body.area !== 'all') {
+    filter.area = req.body.area.trim();
 }
 
-        // ✨ ใช้ similaritySearch ของ Pinecone (syntax เหมือนเดิม)
-        const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
+// 2. กรองด้วย 'manual' (source) ถ้ามีการส่งค่ามา
+if (req.body.manual && req.body.manual !== 'all') {
+    filter.source = req.body.manual.trim();
+}
+
+// ✨ ใช้ similaritySearch ของ Pinecone (syntax เหมือนเดิม แต่ filter ฉลาดขึ้น)
+const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
+
+// --- สิ้นสุดการแก้ไข ---
 
         const context = relevantDocs
           .map((doc) => {
