@@ -124,17 +124,22 @@ async function initializeVectorStore() {
 
     console.log('✅ Pinecone vector store initialized.');
 
-    const stats = await index.describeIndexStats();
-    const recordCount =
-      (stats?.namespaces?.['']?.recordCount) ??
-      Object.values(stats?.namespaces || {}).reduce((sum, ns) => sum + (ns.recordCount || 0), 0);
+   const stats = await index.describeIndexStats();
+const recordCount =
+  (stats?.namespaces?.['']?.recordCount) ??
+  Object.values(stats?.namespaces || {}).reduce((sum, ns) => sum + (ns.recordCount || 0), 0);
 
-    if (!recordCount) {
-      console.log('📚 Index is empty. Loading documents into Pinecone...');
-      await loadDocumentsIntoPinecone();
-    } else {
-      console.log(`✅ Index already contains ${recordCount} records.`);
-    }
+if (!recordCount) {
+  if (INGEST_ON_BOOT) {
+    console.log('📚 Index is empty. Loading documents into Pinecone...');
+    await loadDocumentsIntoPinecone();
+  } else {
+    console.log('⏭️  Index empty, but INGEST_ON_BOOT=false. Skipping ingest on boot.');
+  }
+} else {
+  console.log(`✅ Index already contains ${recordCount} records.`);
+}
+
   } catch (error) {
     console.error('CRITICAL: Failed to initialize Pinecone vector store.', error);
     vectorStore = undefined;
@@ -562,17 +567,21 @@ app.get('/api/manuals', checkAuth, async (_req, res) => {
 
 // --- Start server ---
 async function startServer() {
-  await initializeVectorStore();
+  // 1) ฟังพอร์ตก่อน เพื่อให้ Render ผ่าน health check ได้
+  app.listen(port, () => {
+    console.log(`✅ Backend server is running on port ${port}`);
+  });
 
-  if (vectorStore) {
-    app.listen(port, () => {
-      console.log(`✅ Backend server is running on port ${port}`);
+  // 2) ค่อยไป init Pinecone แบบเบื้องหลัง (ไม่บล็อกบูต)
+  initializeVectorStore()
+    .then(() => {
       console.log(`🔗 Connected to Pinecone index: ${process.env.PINECONE_INDEX_NAME}`);
+    })
+    .catch(err => {
+      console.error('CRITICAL: initializeVectorStore failed:', err);
+      // ไม่ process.exit — ให้ /chat ตอบ 503 จนกว่าจะพร้อม
     });
-  } else {
-    console.error('❌ Server startup failed: vector store not initialized.');
-    process.exit(1);
-  }
 }
+
 
 startServer();
