@@ -171,6 +171,7 @@ async function initializeVectorStore() {
 }
 
 // ✨ ฟังก์ชันใหม่สำหรับโหลดเอกสารเข้า Pinecone
+// ✨ ฟังก์ชันใหม่สำหรับโหลดเอกสารเข้า Pinecone (แก้ไขแล้ว)
 async function loadDocumentsIntoPinecone() {
   try {
     const documentsBasePath = path.join(__dirname, 'documents');
@@ -183,6 +184,7 @@ async function loadDocumentsIntoPinecone() {
     for (const area of areaFolders) {
       const areaPath = path.join(documentsBasePath, area);
       const files = await fs.readdir(areaPath);
+      
       for (const file of files) {
         const filePath = path.join(areaPath, file);
         const fileExt = path.extname(file).toLowerCase();
@@ -194,13 +196,31 @@ async function loadDocumentsIntoPinecone() {
             docsFromFile = await loader.load();
           } else if (fileExt === '.txt') {
             const textContent = await fs.readFile(filePath, 'utf-8');
-            docsFromFile.push({ pageContent: textContent, metadata: {} });
+            docsFromFile.push({ 
+              pageContent: textContent, 
+              metadata: {
+                loc: { pageNumber: 1 } // เพิ่ม page number สำหรับ text files
+              } 
+            });
           }
 
+          // ✨ แก้ไข: เพิ่ม metadata ให้ครบถ้วน
           docsFromFile.forEach(doc => {
-            doc.metadata.source = file.trim();
-            doc.metadata.area = area.trim();
+            // เก็บ metadata เดิมที่มีอยู่ (เช่น pageNumber จาก PDF)
+            const pageNumber = doc.metadata?.loc?.pageNumber || 1;
+            
+            // สร้าง metadata ใหม่ที่ครบถ้วน
+            doc.metadata = {
+              ...doc.metadata, // เก็บ metadata เดิมไว้
+              source: file.trim(),
+              filename: file.trim(), // ✨ เพิ่ม filename
+              area: area.trim(),
+              path: `/documents/${area.trim()}/${file.trim()}`, // ✨ เพิ่ม path สำหรับลิงก์
+              pageNumber: pageNumber, // ✨ เก็บ page number
+              displayName: file.replace(/\.[^/.]+$/, "").replace(/_/g, ' ') // ✨ ชื่อที่แสดง
+            };
           });
+          
           allDocuments.push(...docsFromFile);
 
         } catch (fileError) {
@@ -213,18 +233,30 @@ async function loadDocumentsIntoPinecone() {
       chunkSize: 1000, 
       chunkOverlap: 200 
     });
+    
+    // ✨ เมื่อ split documents ต้องรักษา metadata ไว้
     const splitDocs = await textSplitter.splitDocuments(allDocuments);
+    
+    // ✨ ตรวจสอบว่า metadata ยังครบอยู่หลังจาก split
+    splitDocs.forEach(doc => {
+      if (!doc.metadata.path) {
+        doc.metadata.path = `/documents/${doc.metadata.area}/${doc.metadata.source}`;
+      }
+      if (!doc.metadata.filename) {
+        doc.metadata.filename = doc.metadata.source;
+      }
+    });
 
     console.log(`📤 Uploading ${splitDocs.length} document chunks to Pinecone...`);
+    console.log('📊 Sample metadata:', splitDocs[0]?.metadata); // Debug: ดู metadata ตัวอย่าง
     
-    // ✨ อัปโหลดเอกสารไปยัง Pinecone
+    // อัปโหลดเอกสารไปยัง Pinecone
     const batchSize = 50;
     for (let i = 0; i < splitDocs.length; i += batchSize) {
       const batch = splitDocs.slice(i, i + batchSize);
       await vectorStore.addDocuments(batch);
       console.log(`📤 Uploaded batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(splitDocs.length / batchSize)}...`);
       
-      // รอเล็กน้อยเพื่อไม่ให้ทำงานหนักเกินไป
       if (i + batchSize < splitDocs.length) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
@@ -244,38 +276,47 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
         let { sessionId, question, manual, area } = req.body;
         const imageFile = req.file;
 
-        if (!sessionId) {
-            sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-            chatHistories[sessionId] = [];
-        }
-        if (!chatHistories[sessionId]) {
-            chatHistories[sessionId] = [];
-        }
-        const history = chatHistories[sessionId];
-
-        if (!question) {
-            return res.status(400).json({ error: 'Question is required.' });
-        }
+        // ... (code เดิม session handling) ...
 
         if (!vectorStore) {
             return res.status(503).json({ error: 'AI knowledge base is not ready. Please wait.' });
         }
 
-        // ✨ สำหรับ Pinecone จะใช้ metadata filter แบบใหม่
+        // ✨ แก้ไข: ใช้ filter ที่ถูกต้องสำหรับ Pinecone
         let filter = {};
         if (manual && manual !== 'all') {
-            filter.source = manual.trim();
+            // ✨ ใช้ filename แทน source
+            filter = { 
+                filename: { $eq: manual.trim() }
+            };
+            console.log('🔍 Filtering by filename:', manual.trim());
         } else if (area) {
-            filter.area = area.trim();
+            filter = { 
+                area: { $eq: area.trim() }
+            };
+            console.log('🔍 Filtering by area:', area.trim());
         }
 
-        // ✨ ใช้ similaritySearch ของ Pinecone (syntax เหมือนเดิม)
-        const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
+        // ✨ Debug: ดูว่า filter เป็นอย่างไร
+        console.log('📋 Using filter:', JSON.stringify(filter));
 
+        // ✨ Query พร้อม filter ที่ถูกต้อง
+        const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
+        
+        // ✨ Debug: ดูผลลัพธ์ที่ได้
+        console.log(`📚 Found ${relevantDocs.length} relevant documents`);
+        if (relevantDocs.length > 0) {
+            console.log('📄 First doc metadata:', relevantDocs[0].metadata);
+        }
+
+        // ✨ แก้ไข: สร้าง context ที่มี path ที่ถูกต้อง
         const context = relevantDocs
           .map((doc) => {
-              const docPath = `/documents/${doc.metadata.area}/${doc.metadata.source}`;
-              return `Source Document: ${doc.metadata.source} (Path for linking: ${docPath}, Page: ${doc.metadata.loc?.pageNumber || 1})\nContent:\n${doc.pageContent}`;
+              // ใช้ path ที่เก็บไว้ใน metadata โดยตรง
+              const docPath = doc.metadata.path || `/documents/${doc.metadata.area}/${doc.metadata.source}`;
+              const pageNumber = doc.metadata.pageNumber || doc.metadata.loc?.pageNumber || 1;
+              
+              return `Source Document: ${doc.metadata.source} (Path for linking: ${docPath}, Page: ${pageNumber})\nContent:\n${doc.pageContent}`;
           })
           .join('\n\n---\n\n');
 
@@ -700,6 +741,48 @@ app.get('/api/manuals', checkAuth, async (req, res) => {
         console.error('Error creating manuals manifest:', error);
         res.status(500).json({ error: 'Could not retrieve manual list.' });
     }
+});
+// ✨ ฟังก์ชันสำหรับ clear และ reload ข้อมูลใหม่
+async function resetAndReloadPinecone() {
+  try {
+    console.log('🔄 Starting Pinecone index reset...');
+    
+    const pinecone = new Pinecone({
+      apiKey: process.env.PINECONE_API_KEY,
+    });
+
+    const index = pinecone.Index(process.env.PINECONE_INDEX_NAME);
+    
+    // ลบข้อมูลทั้งหมด (ระวัง: จะลบข้อมูลทั้งหมดใน index)
+    console.log('🗑️ Deleting all vectors...');
+    await index.deleteAll();
+    
+    // รอสักครู่ให้ Pinecone process การลบ
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    // โหลดข้อมูลใหม่
+    console.log('📚 Reloading documents...');
+    await loadDocumentsIntoPinecone();
+    
+    console.log('✅ Pinecone index reset completed!');
+  } catch (error) {
+    console.error('❌ Failed to reset Pinecone:', error);
+  }
+}
+
+// ✨ เพิ่ม endpoint สำหรับ reset (ใช้เฉพาะตอน development)
+app.post('/admin/reset-pinecone', checkAuth, async (req, res) => {
+  // ตรวจสอบว่าเป็น admin
+  if (req.session.username !== 'admin') {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  
+  try {
+    await resetAndReloadPinecone();
+    res.json({ message: 'Pinecone index reset successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to reset Pinecone' });
+  }
 });
 
 // ✨ แก้ไข startServer function
