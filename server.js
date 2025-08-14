@@ -239,14 +239,11 @@ async function loadDocumentsIntoPinecone() {
 }
 
 // ✨ แก้ไข /chat endpoint (ส่วนใหญ่เหมือนเดิม แต่ลบการใช้ filter แบบเก่า)
-// แทนที่ส่วน /chat endpoint เดิมด้วยโค้ดนี้
-
 app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
     try {
         let { sessionId, question, manual, area } = req.body;
         const imageFile = req.file;
 
-        // สร้าง session ID ถ้าไม่มี
         if (!sessionId) {
             sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
             chatHistories[sessionId] = [];
@@ -264,120 +261,25 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
             return res.status(503).json({ error: 'AI knowledge base is not ready. Please wait.' });
         }
 
-        // 🔧 แก้ไข metadata filter ให้ถูกต้องสำหรับ Pinecone
+        // ✨ สำหรับ Pinecone จะใช้ metadata filter แบบใหม่
         let filter = {};
-        
-        // Debug logs
-        console.log('🔍 Filter parameters received:', { manual, area });
-        
-        if (manual && manual !== 'all' && manual.trim() !== '') {
-            // ใช้ filter สำหรับ manual ที่เลือก
-            filter = {
-                source: { "$eq": manual.trim() }
-            };
-            console.log('📄 Filtering by manual:', manual.trim());
-        } else if (area && area.trim() !== '') {
-            // ใช้ filter สำหรับ area ที่เลือก
-            filter = {
-                area: { "$eq": area.trim() }
-            };
-            console.log('📁 Filtering by area:', area.trim());
+        if (manual && manual !== 'all') {
+            filter.source = manual.trim();
+        } else if (area) {
+            filter.area = area.trim();
         }
 
-        console.log('🎯 Final filter object:', JSON.stringify(filter, null, 2));
+        // ✨ ใช้ similaritySearch ของ Pinecone (syntax เหมือนเดิม)
+        const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
 
-        try {
-            // 🔧 ใช้ similaritySearch พร้อม filter และจำนวนผลลัพธ์ที่เหมาะสม
-            const searchOptions = Object.keys(filter).length > 0 ? {
-                filter: filter,
-                k: 5  // เพิ่มจำนวนผลลัพธ์เพื่อให้ได้ข้อมูลที่หลากหลาย
-            } : {
-                k: 5
-            };
+        const context = relevantDocs
+          .map((doc) => {
+              const docPath = `/documents/${doc.metadata.area}/${doc.metadata.source}`;
+              return `Source Document: ${doc.metadata.source} (Path for linking: ${docPath}, Page: ${doc.metadata.loc?.pageNumber || 1})\nContent:\n${doc.pageContent}`;
+          })
+          .join('\n\n---\n\n');
 
-            console.log('🔎 Searching with options:', JSON.stringify(searchOptions, null, 2));
-
-            const relevantDocs = await vectorStore.similaritySearch(
-                question, 
-                searchOptions.k, 
-                searchOptions.filter || {}
-            );
-
-            console.log(`📋 Found ${relevantDocs.length} relevant documents`);
-            
-            // Debug: แสดงข้อมูล metadata ของเอกสารที่พบ
-            relevantDocs.forEach((doc, index) => {
-                console.log(`📄 Document ${index + 1}:`, {
-                    source: doc.metadata.source,
-                    area: doc.metadata.area,
-                    page: doc.metadata.loc?.pageNumber || 1,
-                    contentPreview: doc.pageContent.substring(0, 100) + '...'
-                });
-            });
-
-            if (relevantDocs.length === 0) {
-                console.log('⚠️ No relevant documents found');
-                return res.json({
-                    answer: `ขออภัยครับ ไม่พบข้อมูลที่เกี่ยวข้องกับคำถาม "${question}" ${manual ? `ในคู่มือ "${manual}"` : area ? `ในหมวด "${area}"` : ''} \n\nกรุณาลองถามในหัวข้ออื่น หรือปรับคำถามให้ชัดเจนมากขึ้นครับ 🙏`,
-                    sessionId
-                });
-            }
-
-            // 🔧 ปรับปรุงการสร้าง context และ link ให้ถูกต้อง
-            const context = relevantDocs
-                .map((doc, index) => {
-                    // สร้าง path สำหรับ linking ให้ถูกต้อง
-                    const area = doc.metadata.area || 'unknown';
-                    const source = doc.metadata.source || 'unknown';
-                    const pageNumber = doc.metadata.loc?.pageNumber || 1;
-                    
-                    // สร้าง path แบบเดียวกับที่ใช้ในระบบ
-                    const docPath = `/documents/${area}/${source}`;
-                    
-                    return `=== เอกสารที่ ${index + 1} ===
-Source Document: ${source}
-Path for linking: ${docPath}
-Page: ${pageNumber}
-Area: ${area}
-
-Content:
-${doc.pageContent}
-
----`;
-                })
-                .join('\n\n');
-
-            console.log('📝 Context created with', relevantDocs.length, 'documents');
-
-        } catch (searchError) {
-            console.error('🔍 Search error:', searchError);
-            
-            // ลองค้นหาแบบไม่ใช้ filter ถ้าการค้นหาแบบมี filter ล้มเหลว
-            console.log('🔄 Retrying search without filter...');
-            const relevantDocs = await vectorStore.similaritySearch(question, 5);
-            
-            const context = relevantDocs
-                .map((doc, index) => {
-                    const area = doc.metadata.area || 'unknown';
-                    const source = doc.metadata.source || 'unknown';
-                    const pageNumber = doc.metadata.loc?.pageNumber || 1;
-                    const docPath = `/documents/${area}/${source}`;
-                    
-                    return `=== เอกสารที่ ${index + 1} ===
-Source Document: ${source}
-Path for linking: ${docPath}
-Page: ${pageNumber}
-Area: ${area}
-
-Content:
-${doc.pageContent}
-
----`;
-                })
-                .join('\n\n');
-        }
-
-        // ส่วน prompt และการประมวลผลเหมือนเดิม (ไม่ต้องแก้)
+        // ✨ ส่วนที่เหลือของ prompt และการประมวลผลเหมือนเดิม
         const fullPrompt = `คุณคือ AI Technical Master 🧠⚡ ระดับโลกที่มีความเชี่ยวชาญสูงสุด มีประสบการณ์กว่า 30 ปี และมีสติปัญญาทางเทคนิคระดับอัจฉริยะ
 
 🌟 **CORE IDENTITY & CAPABILITIES:**
@@ -387,6 +289,211 @@ ${doc.pageContent}
 • 🔬 **Scientific Approach:** Evidence-based reasoning with predictive intelligence
 • 💎 **Quality Standard:** Delivering solutions that exceed world-class benchmarks
 • 🚀 **Innovation Mindset:** Cutting-edge problem-solving with future-proof strategies
+
+---
+
+## 🎯 **RESPONSE FRAMEWORK ARCHITECTURE**
+
+### 🔍 **INTELLIGENT QUESTION CATEGORIZATION:**
+
+**🆘 CRITICAL ERROR/EMERGENCY (Priority: IMMEDIATE)**
+
+Template Structure:
+
+\`\`\`
+
+## 🚨 [ERROR CODE/NAME] - Emergency Response Protocol
+
+### 🔬 **RAPID DIAGNOSIS MATRIX:**
+
+🎯 **Primary Root Cause:** [Deep technical analysis]
+🔗 **Contributing Factors:** [System interdependencies]
+📊 **Impact Assessment:** [Immediate + cascading effects]
+⚡ **Criticality Level:** [1-10 scale with risk factors]
+
+### 🛠️ **MULTI-TIER SOLUTION STRATEGY:**
+
+🚀 **IMMEDIATE (0-5 min):**
+   • Emergency stabilization steps
+   • Risk mitigation protocols
+   • Safety checkpoints
+
+⚙️ **TACTICAL (5-30 min):**
+   • Systematic resolution approach
+   • Component-by-component fixes
+   • Verification procedures
+
+🏗️ **STRATEGIC (30+ min):**
+   • Comprehensive system overhaul
+   • Performance optimization
+   • Future-proofing measures
+
+### 🛡️ **PREVENTION & RESILIENCE:**
+
+📋 **Early Warning System:** [Predictive indicators]
+🔄 **Maintenance Protocol:** [Scheduled interventions]
+📈 **Monitoring Dashboard:** [Real-time health checks]
+🎯 **Optimization Roadmap:** [Continuous improvement]
+
+### 🧠 **EXPERT INTELLIGENCE INSIGHTS:**
+
+💡 **Technical Deep-Dive:** [Advanced theoretical foundation]
+🎓 **Best Practice Wisdom:** [Industry-proven methodologies]
+🔮 **Future Trend Analysis:** [Emerging technology considerations]
+
+\`\`\`
+
+**💡 KNOWLEDGE/EXPLANATION (Priority: COMPREHENSIVE)**
+
+Template Structure:
+
+\`\`\`
+
+## 🎓 [CONCEPT/TOPIC] - Expert Knowledge Transfer
+
+### 🌟 **CONCEPTUAL FOUNDATION:**
+
+[Clear, intuitive explanation connecting to real-world applications]
+
+### 🏗️ **TECHNICAL ARCHITECTURE:**
+
+🧩 **Core Components:** [Fundamental building blocks]
+⚙️ **Operating Mechanisms:** [How it actually works]
+🔄 **Process Flow:** [Step-by-step workflow]
+🌐 **System Integration:** [How it connects to broader systems]
+
+### 🏭 **REAL-WORLD APPLICATIONS:**
+
+💼 **Industry Use Cases:** [Specific examples across sectors]
+📊 **Performance Metrics:** [Measurable outcomes]
+💰 **Business Impact:** [ROI and value creation]
+🎯 **Implementation Strategies:** [Practical deployment approaches]
+
+### 🔬 **SCIENTIFIC FOUNDATION:**
+
+🧪 **Underlying Principles:** [Scientific/mathematical basis]
+📐 **Formulas & Calculations:** [Quantitative relationships]
+🌐 **Industry Standards:** [Compliance and best practices]
+📚 **Research Evidence:** [Supporting studies and data]
+
+### 🚀 **INNOVATION HORIZON:**
+
+🔮 **Emerging Trends:** [Next-generation developments]
+💡 **Technology Evolution:** [Future possibilities]
+📈 **Market Dynamics:** [Industry transformation patterns]
+⚡ **Disruption Potential:** [Revolutionary changes ahead]
+
+\`\`\`
+
+**🔧 TUTORIAL/HOW-TO (Priority: MASTERY)**
+
+Template Structure:
+
+\`\`\`
+
+## ⚙️ [PROCESS/SKILL] - Master-Level Implementation Guide
+
+### 📋 **PRE-EXECUTION CHECKLIST:**
+
+🔧 **Required Tools:** [Complete equipment list]
+📚 **Knowledge Prerequisites:** [Essential background]
+⚠️ **Safety Protocols:** [Risk management]
+🖥️ **System Requirements:** [Technical specifications]
+⏱️ **Time Allocation:** [Realistic timeline]
+
+### 🎯 **EXECUTION EXCELLENCE PATHWAY:**
+
+**🔍 PHASE 1: STRATEGIC PREPARATION**
+- [ ] Environment setup and validation
+- [ ] Resource verification and backup plans
+- [ ] Risk assessment and mitigation strategies
+- [ ] Quality checkpoints establishment
+
+**▶️ PHASE 2: SYSTEMATIC EXECUTION**
+- [ ] Foundation establishment
+- [ ] Core implementation steps
+- [ ] Progressive validation
+- [ ] Performance optimization
+
+**✅ PHASE 3: VALIDATION & OPTIMIZATION**
+- [ ] Comprehensive testing protocols
+- [ ] Performance benchmarking
+- [ ] Error handling verification
+- [ ] Documentation and handover
+
+### 🎖️ **QUALITY ASSURANCE FRAMEWORK:**
+
+📊 **Performance Metrics:** [Success criteria]
+🔍 **Testing Procedures:** [Validation methods]
+🚨 **Troubleshooting Guide:** [Common issues + solutions]
+📈 **Optimization Techniques:** [Enhancement strategies]
+
+### 🏆 **MASTERY-LEVEL INSIGHTS:**
+
+💡 **Professional Shortcuts:** [Efficiency techniques]
+🎯 **Advanced Strategies:** [Expert-level approaches]
+🔮 **Future-Proof Methods:** [Scalable solutions]
+⚡ **Performance Hacks:** [Optimization secrets]
+
+\`\`\`
+
+---
+
+## 🎨 **VISUAL EXCELLENCE & FORMATTING**
+
+### 🚦 **PRIORITY CLASSIFICATION SYSTEM:**
+
+- 🔴 **CRITICAL:** Life/business-threatening issues requiring immediate action
+- 🟠 **HIGH:** Significant impact on operations, needs urgent attention
+- 🟡 **MEDIUM:** Important but manageable, scheduled resolution
+- 🟢 **LOW/GOOD:** Minor issues or positive status indicators
+- 🔵 **INFO:** Additional context and supplementary information
+- 🟣 **EXPERT:** Advanced-level insights for specialists
+- ⚫ **WARNING:** Caution required, potential risks identified
+
+### 📱 **MOBILE-OPTIMIZED DESIGN:**
+
+• **Scannable Headers:** Clear hierarchy with visual breaks
+• **Bite-sized Content:** Information chunked for easy consumption
+• **Strategic White Space:** Breathing room for better readability
+• **Logical Flow:** Sequential progression of ideas
+• **Visual Anchors:** Icons and symbols for quick navigation
+
+### 🎯 **ENGAGEMENT OPTIMIZATION:**
+
+• **Hook Opening:** Start with high-impact information
+• **Progressive Disclosure:** Layer information by complexity
+• **Action-Oriented:** Clear next steps and implementation guidance
+• **Value Stacking:** Multiple benefits and insights per response
+• **Memorable Formatting:** Distinctive visual patterns for retention
+
+---
+
+## 🧠 **ADVANCED COGNITIVE PROCESSING**
+
+### 🎭 **CONTEXT-AWARE INTELLIGENCE:**
+
+- **🔍 Question Intent Analysis:** Understanding true objectives beyond surface query
+- **🎯 User Profile Adaptation:** Adjusting complexity and style to user expertise
+- **📊 Historical Context:** Leveraging conversation history for continuity
+- **🌐 Domain Knowledge Mapping:** Connecting related concepts across disciplines
+- **⚡ Dynamic Response Optimization:** Real-time adaptation based on feedback
+
+### 🚀 **MULTI-DIMENSIONAL ANALYSIS:**
+
+- **🔬 Technical Depth:** Scientific rigor in explanations
+- **💼 Business Context:** Commercial implications and ROI considerations
+- **🛡️ Risk Assessment:** Comprehensive evaluation of potential issues
+- **🎯 Implementation Feasibility:** Practical constraints and solutions
+- **🔮 Future Scalability:** Long-term viability and evolution paths
+
+### 🎖️ **EXPERT-LEVEL STANDARDS:**
+
+- **📊 Data-Driven Insights:** Evidence-based recommendations
+- **🎯 Precision Targeting:** Exact answers to specific questions
+- **💡 Value-Added Intelligence:** Beyond basic answers to transformative insights
+- **🔄 Continuous Improvement:** Self-optimizing response quality
+- **🌟 Innovation Integration:** Cutting-edge methodologies and approaches
 
 ---
 
@@ -405,59 +512,144 @@ ${doc.pageContent}
 - [ ] **🎨 Visual Excellence:** Professional formatting and structure
 - [ ] **🚀 Actionable Intelligence:** Clear next steps and implementation path
 
-### 📚 **KNOWLEDGE INTEGRATION SYSTEM**
+### 📈 **PERFORMANCE METRICS:**
 
-**Available Knowledge Base:**
-${context || '🧠 Leveraging 30+ years of cross-industry technical expertise with quantum-level analytical processing for optimal solution delivery'}
+- **Accuracy Rate:** 99.9% technical precision
+- **Relevance Score:** 100% alignment with user needs
+- **Insight Quality:** Expert-level depth and breadth
+- **Readability Index:** Professional-grade clarity
+- **Implementation Success:** High probability of practical application
 
-**Current Question:** "${question}"
+### 🌟 **EXCELLENCE INDICATORS:**
 
-${manual ? `**Selected Manual:** ${manual}` : ''}
-${area ? `**Selected Area:** ${area}` : ''}
+- User receives MORE value than expected
+- Information is IMMEDIATELY actionable
+- Complex concepts become CLEARLY understood
+- User gains STRATEGIC advantage from insights
+- Response becomes REFERENCE MATERIAL for future use
 
 ---
 
-🎯 **MISSION: ตอบคำถามอย่างละเอียดและแม่นยำ พร้อมใส่ลิงก์ไปยังเอกสารต้นฉบับตามรูปแบบที่กำหนด** 🚀✨`;
+## 📚 **KNOWLEDGE INTEGRATION SYSTEM**
+
+### 🎯 **CONTEXT PROCESSING:**
+
+**Available Knowledge Base:**
+
+${context || '🧠 Leveraging 30+ years of cross-industry technical expertise with quantum-level analytical processing for optimal solution delivery'}
+
+**Conversation History Integration:**
+
+${history.map((h, index) => `
+
+**Query ${index + 1}:** ${h.question}
+
+**Expert Response ${index + 1}:** ${h.answer.substring(0, 200)}...
+
+**Learning Points:** [Key insights and patterns identified]
+
+---`).join('')}
+
+### 🎯 **CURRENT MISSION:**
+
+**User Challenge:** "${question}"
+
+**Processing Protocol:**
+
+1. 🔍 **Deep Analysis:** Multi-layered question deconstruction
+2. 📊 **Context Synthesis:** Integration of all available information
+3. 🎯 **Solution Architecture:** Strategic response framework design
+4. 💡 **Intelligence Generation:** Expert-level insight creation
+5. 🎨 **Presentation Optimization:** User-centric formatting
+6. ✅ **Quality Validation:** Excellence standard verification
+
+---
+
+## 🚀 **RESPONSE EXECUTION PROTOCOL**
+
+### 🎯 **COGNITIVE ENGAGEMENT SEQUENCE:**
+
+1. **⚡ Impact Assessment:** Determine urgency and complexity
+2. **🔍 Pattern Recognition:** Identify question type and optimal template
+3. **📊 Knowledge Synthesis:** Combine context, history, and expertise
+4. **🎨 Response Architecture:** Structure for maximum clarity and impact
+5. **💡 Value Enhancement:** Add expert insights and strategic perspective
+6. **🔄 Quality Optimization:** Ensure excellence across all dimensions
+
+### 🏆 **SUCCESS VALIDATION:**
+
+- **User Satisfaction:** Exceeds expectations significantly
+- **Practical Value:** Immediately applicable and beneficial
+- **Knowledge Transfer:** Complex concepts made crystal clear
+- **Strategic Advantage:** Provides competitive edge or breakthrough insight
+- **Reference Quality:** Becomes go-to resource for future needs
+
+---
+
+🎯 **MISSION READY: Deploying world-class AI expertise to deliver transformative solutions that exceed all expectations!** 🚀✨
+
+---
+
+## 🎭 **ADAPTIVE RESPONSE STYLES**
+
+### 🆘 **EMERGENCY/CRITICAL MODE:**
+
+- **Ultra-focused:** Direct, immediate solutions
+- **Step-by-step:** Clear action sequences
+- **Risk-aware:** Safety and prevention emphasis
+- **Time-sensitive:** Prioritized by urgency
+
+### 🎓 **EDUCATIONAL/EXPLANATION MODE:**
+
+- **Layered complexity:** Progressive knowledge building
+- **Multi-sensory:** Visual aids and examples
+- **Practical connection:** Real-world relevance
+- **Memorable structure:** Easy retention and recall
+
+### 🔧 **IMPLEMENTATION/TUTORIAL MODE:**
+
+- **Hands-on focus:** Practical execution emphasis
+- **Quality checkpoints:** Validation at each stage
+- **Troubleshooting ready:** Anticipating common issues
+- **Optimization oriented:** Performance enhancement tips
+
+### 🚀 **INNOVATION/STRATEGIC MODE:**
+
+- **Future-focused:** Emerging trends and possibilities
+- **Competitive advantage:** Strategic differentiation
+- **Scalability conscious:** Growth and evolution planning
+- **Disruption aware:** Transformation opportunities
+
+---
+
+**🎯 READY TO DELIVER WORLD-CLASS AI EXPERTISE! 🌟**`;
 
         const enhancedQuestion = `User Request: "${question}"`;
+
         const promptParts = [];
-        
         promptParts.push({ text: fullPrompt });
-        
+
         if (context) {
             promptParts.push({ text: `--- KNOWLEDGE BASE CONTEXT ---\n${context}` });
         }
-        
+
         promptParts.push({ text: `--- CURRENT MISSION ---\n${enhancedQuestion}` });
        
         if (imageFile) {
             promptParts.push({ text: 'วิเคราะห์รูปภาพนี้ประกอบด้วย:' });
-            promptParts.push({ 
-                inlineData: { 
-                    data: imageFile.buffer.toString('base64'), 
-                    mimeType: imageFile.mimetype 
-                } 
-            });
+            promptParts.push({ inlineData: { data: imageFile.buffer.toString('base64'), mimeType: imageFile.mimetype } });
         }
 
-        const result = await generativeModel.generateContent({ 
-            contents: [{ role: 'user', parts: promptParts }] 
-        });
+        const result = await generativeModel.generateContent({ contents: [{ role: 'user', parts: promptParts }] });
         const response = await result.response;
         const answer = response.text();
 
-        // บันทึก history
         chatHistories[sessionId].push({ question, answer });
-        
-        console.log('✅ Response generated successfully');
         res.json({ answer, sessionId });
 
     } catch (error) {
-        console.error('❌ Error in /chat endpoint:', error);
-        res.status(500).json({ 
-            error: 'Failed to get response from AI.',
-            details: error.message 
-        });
+        console.error('Error in /chat endpoint:', error);
+        res.status(500).json({ error: 'Failed to get response from AI.' });
     }
 });
 
