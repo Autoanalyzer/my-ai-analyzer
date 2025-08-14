@@ -1,4 +1,4 @@
-// server.js (Pinecone + RAG + PDF deep-link, full version)
+// server.js (Fixed version with proper Pinecone integration and deep links)
 
 require('dotenv').config();
 
@@ -6,7 +6,6 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs/promises');
-// const pdf = require('pdf-parse'); // not used
 const path = require('path');
 const session = require('express-session');
 
@@ -28,6 +27,18 @@ app.set('trust proxy', 1);
 
 const port = process.env.PORT || 5500;
 
+// --- Environment Variables Check ---
+const requiredEnvVars = ['GEMINI_API_KEY', 'PINECONE_API_KEY', 'PINECONE_INDEX_NAME'];
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    console.error(`❌ Missing required environment variable: ${envVar}`);
+    process.exit(1);
+  }
+}
+
+// Set INGEST_ON_BOOT default value
+const INGEST_ON_BOOT = process.env.INGEST_ON_BOOT !== 'false';
+
 // --- Users & Session ---
 const users = [
   { id: 1, username: 'admin', password: 'password123' },
@@ -35,7 +46,7 @@ const users = [
 ];
 
 app.use(session({
-  secret: 'your_super_secret_key',
+  secret: process.env.SESSION_SECRET || 'your_super_secret_key',
   resave: false,
   saveUninitialized: false,
   cookie: { secure: false, maxAge: 60 * 60 * 1000 },
@@ -43,6 +54,7 @@ app.use(session({
 
 const chatHistories = {};
 let vectorStore; // PineconeStore
+let pineconeIndex;
 
 app.use(cors());
 app.use(express.json());
@@ -115,34 +127,39 @@ async function initializeVectorStore() {
   try {
     console.log('🔧 Initializing Pinecone connection...');
     const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
-    const index = pinecone.Index(process.env.PINECONE_INDEX_NAME);
+    pineconeIndex = pinecone.Index(process.env.PINECONE_INDEX_NAME);
 
-    // More stable across versions
+    // Create PineconeStore instance
     vectorStore = await PineconeStore.fromExistingIndex(embeddingsModel, {
-      pineconeIndex: index,
+      pineconeIndex: pineconeIndex,
     });
 
     console.log('✅ Pinecone vector store initialized.');
 
-   const stats = await index.describeIndexStats();
-const recordCount =
-  (stats?.namespaces?.['']?.recordCount) ??
-  Object.values(stats?.namespaces || {}).reduce((sum, ns) => sum + (ns.recordCount || 0), 0);
+    // Check if index has data
+    const stats = await pineconeIndex.describeIndexStats();
+    const recordCount = stats?.totalRecordCount || 
+      (stats?.namespaces?.['']?.recordCount) ||
+      Object.values(stats?.namespaces || {}).reduce((sum, ns) => sum + (ns.recordCount || 0), 0);
 
-if (!recordCount) {
-  if (INGEST_ON_BOOT) {
-    console.log('📚 Index is empty. Loading documents into Pinecone...');
-    await loadDocumentsIntoPinecone();
-  } else {
-    console.log('⏭️  Index empty, but INGEST_ON_BOOT=false. Skipping ingest on boot.');
-  }
-} else {
-  console.log(`✅ Index already contains ${recordCount} records.`);
-}
+    console.log(`📊 Index statistics:`, stats);
+    console.log(`📈 Total records: ${recordCount}`);
+
+    if (!recordCount || recordCount === 0) {
+      if (INGEST_ON_BOOT) {
+        console.log('📚 Index is empty. Loading documents into Pinecone...');
+        await loadDocumentsIntoPinecone();
+      } else {
+        console.log('⏭️ Index empty, but INGEST_ON_BOOT=false. Skipping ingest on boot.');
+      }
+    } else {
+      console.log(`✅ Index already contains ${recordCount} records.`);
+    }
 
   } catch (error) {
     console.error('CRITICAL: Failed to initialize Pinecone vector store.', error);
     vectorStore = undefined;
+    throw error;
   }
 }
 
@@ -150,15 +167,28 @@ if (!recordCount) {
 async function loadDocumentsIntoPinecone() {
   try {
     const documentsBasePath = path.join(__dirname, 'documents');
+    
+    // Check if documents directory exists
+    try {
+      await fs.access(documentsBasePath);
+    } catch (error) {
+      console.error('❌ Documents directory not found:', documentsBasePath);
+      throw new Error('Documents directory not found');
+    }
+
     const allDocuments = [];
 
     const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
       .filter(d => d.isDirectory())
       .map(d => d.name);
 
+    console.log('📁 Found area folders:', areaFolders);
+
     for (const area of areaFolders) {
       const areaPath = path.join(documentsBasePath, area);
       const files = await fs.readdir(areaPath);
+      
+      console.log(`📁 Processing area "${area}" with ${files.length} files`);
 
       for (const file of files) {
         const filePath = path.join(areaPath, file);
@@ -167,54 +197,144 @@ async function loadDocumentsIntoPinecone() {
         try {
           let docsFromFile = [];
           if (ext === '.pdf') {
+            console.log(`📄 Loading PDF: ${file}`);
             const loader = new PDFLoader(filePath);
             docsFromFile = await loader.load();
           } else if (ext === '.txt') {
+            console.log(`📄 Loading TXT: ${file}`);
             const text = await fs.readFile(filePath, 'utf-8');
-            docsFromFile.push({ pageContent: text, metadata: {} });
+            docsFromFile.push({ 
+              pageContent: text, 
+              metadata: { 
+                loc: { pageNumber: 1 }
+              } 
+            });
           } else {
+            console.log(`⏭️ Skipping file: ${file} (unsupported extension: ${ext})`);
             continue;
           }
 
-          docsFromFile.forEach(doc => {
+          // Add metadata to each document
+          docsFromFile.forEach((doc, index) => {
             doc.metadata.source = file.trim();            // e.g. PP11_CO_M300E.pdf
             doc.metadata.area   = area.trim();            // e.g. PP11
             doc.metadata.title  = path.parse(file).name;  // e.g. PP11_CO_M300E
+            
+            // Ensure pageNumber exists
+            if (!doc.metadata.loc) {
+              doc.metadata.loc = { pageNumber: index + 1 };
+            }
+            if (!doc.metadata.loc.pageNumber) {
+              doc.metadata.loc.pageNumber = index + 1;
+            }
+            
+            console.log(`📖 Document metadata:`, {
+              source: doc.metadata.source,
+              area: doc.metadata.area,
+              title: doc.metadata.title,
+              page: doc.metadata.loc.pageNumber,
+              contentLength: doc.pageContent.length
+            });
           });
 
           allDocuments.push(...docsFromFile);
+          console.log(`✅ Processed ${file}: ${docsFromFile.length} documents`);
         } catch (fileErr) {
-          console.error(`Could not process file: ${file}`, fileErr);
+          console.error(`❌ Could not process file: ${file}`, fileErr);
         }
       }
     }
+
+    if (allDocuments.length === 0) {
+      throw new Error('No documents found to process');
+    }
+
+    console.log(`📚 Total documents loaded: ${allDocuments.length}`);
 
     const splitter = new RecursiveCharacterTextSplitter({
       chunkSize: 1000,
       chunkOverlap: 200,
     });
     const splitDocs = await splitter.splitDocuments(allDocuments);
+    
+    console.log(`✂️ Split into ${splitDocs.length} chunks`);
+
+    // Validate split documents
+    splitDocs.forEach((doc, index) => {
+      if (!doc.metadata.source || !doc.metadata.area) {
+        console.error(`❌ Invalid metadata for chunk ${index}:`, doc.metadata);
+      }
+    });
 
     console.log(`📤 Uploading ${splitDocs.length} chunks to Pinecone...`);
     const batchSize = 50;
     for (let i = 0; i < splitDocs.length; i += batchSize) {
       const batch = splitDocs.slice(i, i + batchSize);
-      await vectorStore.addDocuments(batch);
-      console.log(`📤 Uploaded batch ${Math.floor(i / batchSize) + 1} / ${Math.ceil(splitDocs.length / batchSize)}`);
-      if (i + batchSize < splitDocs.length) await new Promise(r => setTimeout(r, 1000));
+      try {
+        await vectorStore.addDocuments(batch);
+        console.log(`📤 Uploaded batch ${Math.floor(i / batchSize) + 1} / ${Math.ceil(splitDocs.length / batchSize)}`);
+      } catch (batchError) {
+        console.error(`❌ Error uploading batch ${Math.floor(i / batchSize) + 1}:`, batchError);
+        throw batchError;
+      }
+      
+      // Add delay between batches to avoid rate limits
+      if (i + batchSize < splitDocs.length) {
+        await new Promise(r => setTimeout(r, 1000));
+      }
     }
     console.log('✅ All documents uploaded to Pinecone.');
+
+    // Verify upload
+    const stats = await pineconeIndex.describeIndexStats();
+    console.log('📊 Updated index statistics:', stats);
+
   } catch (error) {
     console.error('CRITICAL: Failed to load documents into Pinecone.', error);
     throw error;
   }
 }
 
-// --- Chat endpoint ---
+// --- Health check endpoint ---
+app.get('/health', (req, res) => {
+  const status = {
+    server: 'running',
+    vectorStore: vectorStore ? 'ready' : 'not ready',
+    timestamp: new Date().toISOString()
+  };
+  res.json(status);
+});
+
+// --- Debug endpoint to test vector search ---
+app.get('/api/debug/search/:query', checkAuth, async (req, res) => {
+  try {
+    if (!vectorStore) {
+      return res.status(503).json({ error: 'Vector store not ready' });
+    }
+
+    const query = req.params.query;
+    const results = await vectorStore.similaritySearch(query, 3);
+    
+    res.json({
+      query,
+      results: results.map(doc => ({
+        content: doc.pageContent.substring(0, 200) + '...',
+        metadata: doc.metadata
+      }))
+    });
+  } catch (error) {
+    console.error('Debug search error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// --- Chat endpoint (Fixed) ---
 app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
   try {
     let { sessionId, question, manual, area } = req.body;
     const imageFile = req.file;
+
+    console.log('[DEBUG] Chat request:', { sessionId, question, manual, area });
 
     if (!sessionId) {
       sessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -224,34 +344,48 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
     const history = chatHistories[sessionId];
 
     if (!question) return res.status(400).json({ error: 'Question is required.' });
-    if (!vectorStore) return res.status(503).json({ error: 'AI knowledge base is not ready. Please wait.' });
+    if (!vectorStore) {
+      console.error('[ERROR] Vector store not ready');
+      return res.status(503).json({ error: 'AI knowledge base is not ready. Please wait and try again.' });
+    }
 
-    // --- Build filter (area + exact filename if provided) ---
-    // --- Build metadata filter (manual ชนะ area + area ไม่สนตัวพิมพ์) ---
-const areaParam   = (area   || '').trim();
-const manualParam = (manual || '').trim();
+    // --- Build metadata filter (manual beats area + case insensitive area) ---
+    const areaParam   = (area   || '').trim();
+    const manualParam = (manual || '').trim();
 
-let filter; // ตั้งให้เป็น undefined ถ้าไม่ต้องกรองอะไรเลย
+    let filter; // undefined if no filtering needed
 
-if (manualParam && /\.pdf$/i.test(manualParam)) {
-  // กรณีเลือกไฟล์จริง: ให้กรองตามชื่อไฟล์เท่านั้น
-  filter = { source: manualParam };
-} else if (areaParam && areaParam.toLowerCase() !== 'all') {
-  // กรณีไม่ได้เลือกไฟล์: กรอง area แบบ case-insensitive
-  filter = { area: { $in: [areaParam, areaParam.toUpperCase(), areaParam.toLowerCase()] } };
-} else {
-  filter = undefined;
-}
+    if (manualParam && /\.pdf$/i.test(manualParam)) {
+      // Case: specific file selected - filter by filename only
+      filter = { source: manualParam };
+      console.log('[DEBUG] Filtering by manual:', manualParam);
+    } else if (areaParam && areaParam.toLowerCase() !== 'all') {
+      // Case: area selected but no specific file - filter by area (case-insensitive)
+      filter = { area: { $in: [areaParam, areaParam.toUpperCase(), areaParam.toLowerCase()] } };
+      console.log('[DEBUG] Filtering by area:', areaParam);
+    } else {
+      filter = undefined;
+      console.log('[DEBUG] No filtering applied');
+    }
 
-console.log('[DEBUG] pinecone filter =', JSON.stringify(filter));
-
+    console.log('[DEBUG] Pinecone filter =', JSON.stringify(filter));
 
     // --- Vector search ---
-    const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
+    let relevantDocs;
+    try {
+      relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
+      console.log(`[DEBUG] Found ${relevantDocs.length} relevant documents`);
+    } catch (searchError) {
+      console.error('[ERROR] Vector search failed:', searchError);
+      return res.status(500).json({ error: 'Search failed. Please try again.' });
+    }
 
     if (!relevantDocs?.length) {
+      const filterInfo = filter ? 
+        `(area=${areaParam || '-'}, manual=${manualParam || '-'})` : 
+        '';
       return res.json({
-        answer: `ไม่พบข้อมูลในไฟล์ที่เลือก (area=${area || '-'}, manual=${manual || '-'})`,
+        answer: `ไม่พบข้อมูลที่เกี่ยวข้องในฐานข้อมูล ${filterInfo}`,
         sessionId,
         sources: []
       });
@@ -262,12 +396,17 @@ console.log('[DEBUG] pinecone filter =', JSON.stringify(filter));
       const folder = (doc.metadata.area || '').trim();
       const file   = (doc.metadata.source || '').trim();
       const page   = doc.metadata.loc?.pageNumber || 1;
+      
+      console.log('[DEBUG] Source metadata:', { folder, file, page });
+      
       return {
         title: doc.metadata.title || file.replace(/\.pdf$/i, ''),
         page,
         url: `/documents/${encodeURIComponent(folder)}/${encodeURIComponent(file)}#page=${page}`
       };
     });
+
+    console.log('[DEBUG] Generated sources:', sources);
 
     // --- Build context for the model ---
     const context = relevantDocs.map(doc => {
@@ -276,8 +415,8 @@ console.log('[DEBUG] pinecone filter =', JSON.stringify(filter));
 ${doc.pageContent}`;
     }).join('\n\n---\n\n');
 
-    // --- Full system prompt (no shortening) ---
-    const fullPrompt = `คุณคือ AI Technical Master 🧠⚡ ระดับโลกที่มีความเชี่ยวชาญสูงสุด มีประสบการณ์กว่า 30 ปี และมีสติปัญญาทางเทคนิคระดับอัจฉริยะ
+    // --- Simplified system prompt for better performance ---
+    const systemPrompt = `คุณคือ AI Technical Assistant ที่เชี่ยวชาญด้านเทคนิค
 
 🌟 CORE IDENTITY & CAPABILITIES:
 
@@ -484,13 +623,13 @@ Conversation History Integration:
 [ระบบจะเติมจาก history เพื่อความต่อเนื่อง]
 `;
 
-    const enhancedQuestion = `User Request: "${question}"`;
+    const enhancedQuestion = `คำถาม: "${question}"
 
-    const promptParts = [{ text: fullPrompt }];
-    if (context) {
-      promptParts.push({ text: `--- KNOWLEDGE BASE CONTEXT ---\n${context}` });
-    }
-    promptParts.push({ text: `--- CURRENT MISSION ---\n${enhancedQuestion}` });
+ข้อมูลจากเอกสาร:
+${context}`;
+
+    const promptParts = [{ text: systemPrompt }];
+    promptParts.push({ text: enhancedQuestion });
 
     if (imageFile) {
       promptParts.push({ text: 'วิเคราะห์รูปภาพนี้ประกอบด้วย:' });
@@ -502,16 +641,26 @@ Conversation History Integration:
       });
     }
 
-    const result = await generativeModel.generateContent({
-      contents: [{ role: 'user', parts: promptParts }],
-    });
-    const answer = result.response.text();
+    // --- Generate response ---
+    let answer;
+    try {
+      const result = await generativeModel.generateContent({
+        contents: [{ role: 'user', parts: promptParts }],
+      });
+      answer = result.response.text();
+      console.log('[DEBUG] Generated answer length:', answer.length);
+    } catch (aiError) {
+      console.error('[ERROR] AI generation failed:', aiError);
+      return res.status(500).json({ error: 'Failed to generate response. Please try again.' });
+    }
 
+    // Store in chat history
     chatHistories[sessionId].push({ question, answer });
+    
     return res.json({ answer, sessionId, sources });
   } catch (error) {
     console.error('Error in /chat endpoint:', error);
-    return res.status(500).json({ error: 'Failed to get response from AI.' });
+    return res.status(500).json({ error: 'Internal server error. Please try again.' });
   }
 });
 
@@ -519,6 +668,15 @@ Conversation History Integration:
 app.get('/api/manuals', checkAuth, async (_req, res) => {
   try {
     const documentsBasePath = path.join(__dirname, 'documents');
+    
+    // Check if documents directory exists
+    try {
+      await fs.access(documentsBasePath);
+    } catch (error) {
+      console.error('❌ Documents directory not found:', documentsBasePath);
+      return res.status(404).json({ error: 'Documents directory not found' });
+    }
+
     const manualDatabase = {};
 
     const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
@@ -527,37 +685,47 @@ app.get('/api/manuals', checkAuth, async (_req, res) => {
 
     for (const area of areaFolders) {
       const areaPath = path.join(documentsBasePath, area.trim());
-      const files = await fs.readdir(areaPath);
+      
+      let files;
+      try {
+        files = await fs.readdir(areaPath);
+      } catch (error) {
+        console.error(`❌ Cannot read area folder: ${area}`, error);
+        continue;
+      }
 
       const areaKey = area.trim().toLowerCase();
       manualDatabase[areaKey] = {
         name: area.trim(),
-        files: files.map(fileName => {
-          const trimmedFileName = fileName.trim();
-          const fileBaseName = path.parse(trimmedFileName).name;
+        files: files
+          .filter(fileName => fileName.trim().length > 0) // Filter out empty names
+          .map(fileName => {
+            const trimmedFileName = fileName.trim();
+            const fileBaseName = path.parse(trimmedFileName).name;
 
-          const prefix = `${area.trim()}_`;
-          let nameWithoutPrefix = fileBaseName;
-          if (fileBaseName.startsWith(prefix)) {
-            nameWithoutPrefix = fileBaseName.substring(prefix.length);
-          }
+            const prefix = `${area.trim()}_`;
+            let nameWithoutPrefix = fileBaseName;
+            if (fileBaseName.startsWith(prefix)) {
+              nameWithoutPrefix = fileBaseName.substring(prefix.length);
+            }
 
-          const imageName = nameWithoutPrefix;
-          const imagePath = `images/${imageName}.png`;
+            const imageName = nameWithoutPrefix;
+            const imagePath = `images/${imageName}.png`;
 
-          let displayName = nameWithoutPrefix.replace(/_/g, ' ').replace(/-/g, ' ');
-          displayName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+            let displayName = nameWithoutPrefix.replace(/_/g, ' ').replace(/-/g, ' ');
+            displayName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
 
-          return {
-            name: trimmedFileName,                               // real filename for filtering
-            path: `documents/${area.trim()}/${trimmedFileName}`, // relative path
-            displayName,
-            image: imagePath,
-          };
-        }),
+            return {
+              name: trimmedFileName,                               // real filename for filtering
+              path: `documents/${area.trim()}/${trimmedFileName}`, // relative path
+              displayName,
+              image: imagePath,
+            };
+          }),
       };
     }
 
+    console.log('[DEBUG] Manual database created:', Object.keys(manualDatabase));
     return res.json(manualDatabase);
   } catch (error) {
     console.error('Error creating manuals manifest:', error);
@@ -565,23 +733,56 @@ app.get('/api/manuals', checkAuth, async (_req, res) => {
   }
 });
 
+// --- Force re-index endpoint (for debugging) ---
+app.post('/api/admin/reindex', checkAuth, async (req, res) => {
+  try {
+    if (!vectorStore) {
+      return res.status(503).json({ error: 'Vector store not ready' });
+    }
+
+    console.log('🔄 Force re-indexing requested...');
+    await loadDocumentsIntoPinecone();
+    
+    res.json({ message: 'Re-indexing completed successfully' });
+  } catch (error) {
+    console.error('Re-indexing failed:', error);
+    res.status(500).json({ error: 'Re-indexing failed: ' + error.message });
+  }
+});
+
+// --- Error handler middleware ---
+app.use((error, req, res, next) => {
+  console.error('[ERROR] Unhandled error:', error);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
 // --- Start server ---
 async function startServer() {
-  // 1) ฟังพอร์ตก่อน เพื่อให้ Render ผ่าน health check ได้
-  app.listen(port, () => {
+  // 1) Listen on port first so Render can pass health checks
+  const server = app.listen(port, () => {
     console.log(`✅ Backend server is running on port ${port}`);
+    console.log(`🌐 Health check: http://localhost:${port}/health`);
   });
 
-  // 2) ค่อยไป init Pinecone แบบเบื้องหลัง (ไม่บล็อกบูต)
+  // 2) Initialize Pinecone in background (non-blocking)
   initializeVectorStore()
     .then(() => {
       console.log(`🔗 Connected to Pinecone index: ${process.env.PINECONE_INDEX_NAME}`);
+      console.log(`🤖 AI Chatbot is ready to answer questions!`);
     })
     .catch(err => {
       console.error('CRITICAL: initializeVectorStore failed:', err);
-      // ไม่ process.exit — ให้ /chat ตอบ 503 จนกว่าจะพร้อม
+      // Don't exit - let /chat return 503 until ready
     });
-}
 
+  // Graceful shutdown
+  process.on('SIGTERM', () => {
+    console.log('🛑 SIGTERM received, shutting down gracefully...');
+    server.close(() => {
+      console.log('✅ Server closed');
+      process.exit(0);
+    });
+  });
+}
 
 startServer();
