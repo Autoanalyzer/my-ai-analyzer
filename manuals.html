@@ -1,57 +1,55 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>AI Troubleshoot & Manuals</title>
-  <link rel="stylesheet" href="style.css" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Troubleshoot & Manuals</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
-  <header class="main-header">
-    <h1>AI Troubleshoot & Manuals</h1>
-    <p>ระบบช่วยวิเคราะห์และรายการคู่มือทั้งหมด</p>
-  </header>
+    <header class="main-header">
+        <h1>AI Troubleshoot & Manuals</h1>
+        <p>ระบบช่วยวิเคราะห์และรายการคู่มือทั้งหมด</p>
+    </header>
 
-  <main class="content">
-    <div class="manuals-grid">
-      <div class="detail-card">
-        <h2 id="manuals-title">กำลังโหลดคู่มือ...</h2>
-        <div class="manuals-list-container"></div>
-      </div>
+    <main class="content">
+        <div class="manuals-grid">
+            
+            <div class="detail-card">
+                <h2 id="manuals-title">กำลังโหลดคู่มือ...</h2>
+                <div class="manuals-list-container">
+                    </div>
+            </div>
 
-      <div class="chat-container">
-        <div class="ai-options">
-          <label for="manual-select">ค้นหาใน:</label>
-          <select name="manuals" id="manual-select">
-            <option value="all">คู่มือทั้งหมด</option>
-          </select>
+            <div class="chat-container">
+                <div class="ai-options">
+                    <label for="manual-select">ค้นหาใน:</label>
+                    <select name="manuals" id="manual-select">
+                        <option value="all">คู่มือทั้งหมด</option>
+                        </select>
+                </div>
+                <div id="chat-messages" class="chat-messages">
+                    <div class="chat-message ai-message">
+                        <strong>AI Assistant:</strong> สวัสดีครับ พบปัญหาอะไรให้ช่วยวิเคราะห์หรือไม่?
+                    </div>
+                </div>
+                <div id="image-preview-container"></div>
+                <div class="chat-input-area">
+                    <input type="text" id="chat-input" placeholder="ตัวอย่าง: ZPA ขึ้น error no.5">
+                    <button id="upload-btn" title="อัปโหลดรูปภาพ" class="button-back">📎</button>
+                    <button id="send-btn" class="button-link">ส่ง</button>
+                    <input type="file" id="image-upload-input" hidden accept="image/*">
+                </div>
+            </div>
+
         </div>
-
-        <div id="chat-messages" class="chat-messages">
-          <div class="chat-message ai-message">
-            <strong>AI Assistant:</strong> สวัสดีครับ พบปัญหาอะไรให้ช่วยวิเคราะห์หรือไม่?
-          </div>
-        </div>
-
-        <div id="image-preview-container"></div>
-
-        <div class="chat-input-area">
-          <input type="text" id="chat-input" placeholder="ตัวอย่าง: ZPA ขึ้น error no.5" />
-          <button id="upload-btn" title="อัปโหลดรูปภาพ" class="button-back">📎</button>
-          <button id="send-btn" class="button-link">ส่ง</button>
-          <input type="file" id="image-upload-input" hidden accept="image/*" />
-        </div>
-      </div>
-    </div>
-
-    <a href="index.html" class="button-back" style="margin-top: 30px;">&larr; ย้อนกลับ</a>
-  </main>
-
-  <!-- โหลด JS เป็นไฟล์แยกเท่านั้น ห้ามวางโค้ด JS ตรง ๆ ในไฟล์นี้ -->
-  <script src="manuals-loader.js" defer></script>
-  <script src="ai_chat.js" defer></script>
+        <a href="index.html" class="button-back" style="margin-top: 30px;">&larr; ย้อนกลับ</a>
+    </main>
+    
+    <script src="manuals-loader.js"></script>
+    <script src="ai_chat.js"></script>
 </body>
 </html>
