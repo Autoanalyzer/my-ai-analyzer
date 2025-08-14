@@ -19,7 +19,7 @@ const { GoogleGenerativeAIEmbeddings } = require('@langchain/google-genai');
 
 const { PineconeStore } = require('@langchain/pinecone');
 const { RecursiveCharacterTextSplitter } = require('@langchain/textsplitters');
-const { PDFLoader } = require('@langchain/community/document_loaders/fs/pdf');
+const { PDFLoader } = require('langchain/document_loaders/fs/pdf');
 
 const { Pinecone } = require('@pinecone-database/pinecone');
 
