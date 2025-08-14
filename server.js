@@ -24,6 +24,8 @@ const { PDFLoader } = require('langchain/document_loaders/fs/pdf');
 const { Pinecone } = require('@pinecone-database/pinecone');
 
 const app = express();
+app.set('trust proxy', 1);
+
 const port = process.env.PORT || 5500;
 
 // --- Users & Session ---
@@ -220,11 +222,24 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
     if (!vectorStore) return res.status(503).json({ error: 'AI knowledge base is not ready. Please wait.' });
 
     // --- Build filter (area + exact filename if provided) ---
-    const filter = {};
-    if (area && area !== 'all') filter.area = area.trim();
-    if (manual && manual !== 'all' && /\.pdf$/i.test(manual)) {
-      filter.source = manual.trim(); // only when it's a real filename.pdf
-    }
+    // --- Build metadata filter (manual ชนะ area + area ไม่สนตัวพิมพ์) ---
+const areaParam   = (area   || '').trim();
+const manualParam = (manual || '').trim();
+
+let filter; // ตั้งให้เป็น undefined ถ้าไม่ต้องกรองอะไรเลย
+
+if (manualParam && /\.pdf$/i.test(manualParam)) {
+  // กรณีเลือกไฟล์จริง: ให้กรองตามชื่อไฟล์เท่านั้น
+  filter = { source: manualParam };
+} else if (areaParam && areaParam.toLowerCase() !== 'all') {
+  // กรณีไม่ได้เลือกไฟล์: กรอง area แบบ case-insensitive
+  filter = { area: { $in: [areaParam, areaParam.toUpperCase(), areaParam.toLowerCase()] } };
+} else {
+  filter = undefined;
+}
+
+console.log('[DEBUG] pinecone filter =', JSON.stringify(filter));
+
 
     // --- Vector search ---
     const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);

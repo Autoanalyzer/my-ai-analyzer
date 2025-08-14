@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
   // --- read area from URL ---
   const urlParams = new URLSearchParams(window.location.search);
-  const selectedArea = urlParams.get('device'); // must match folder name under /documents
+  const selectedArea = (urlParams.get('device') || '').trim();
 
   // --- optionally populate manuals (value = real filename.pdf) ---
   maybePopulateManuals(selectedArea);
@@ -46,10 +46,11 @@ document.addEventListener('DOMContentLoaded', function () {
     // Build form-data payload (server expects multipart/form-data)
     const formData = new FormData();
     formData.append('question', userText);
-    if (selectedManual) formData.append('manual', selectedManual); // should be real filename.pdf
-    if (selectedArea) formData.append('area', selectedArea);
-    if (sessionId) formData.append('sessionId', sessionId);
-    if (uploadedFile) formData.append('image', uploadedFile, uploadedFile.name);
+if (selectedManual) formData.append('manual', selectedManual);        // ชื่อไฟล์ .pdf
+if (selectedArea)  formData.append('area', selectedArea.toUpperCase()); // ส่ง area เป็นตัวใหญ่
+if (sessionId)     formData.append('sessionId', sessionId);
+if (uploadedFile)  formData.append('image', uploadedFile, uploadedFile.name);
+
 
     // reset input/preview
     chatInput.value = '';
