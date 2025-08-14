@@ -1,55 +1,132 @@
-<!DOCTYPE html>
-<html lang="th">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Troubleshoot & Manuals</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
-</head>
-<body>
-    <header class="main-header">
-        <h1>AI Troubleshoot & Manuals</h1>
-        <p>ระบบช่วยวิเคราะห์และรายการคู่มือทั้งหมด</p>
-    </header>
+// manuals-loader.js (full)
 
-    <main class="content">
-        <div class="manuals-grid">
-            
-            <div class="detail-card">
-                <h2 id="manuals-title">กำลังโหลดคู่มือ...</h2>
-                <div class="manuals-list-container">
-                    </div>
-            </div>
+document.addEventListener('DOMContentLoaded', async () => {
+  const titleEl = document.getElementById('manuals-title');
+  const gridEl = document.querySelector('.manuals-list-container');
+  const manualSelect = document.getElementById('manual-select');
 
-            <div class="chat-container">
-                <div class="ai-options">
-                    <label for="manual-select">ค้นหาใน:</label>
-                    <select name="manuals" id="manual-select">
-                        <option value="all">คู่มือทั้งหมด</option>
-                        </select>
-                </div>
-                <div id="chat-messages" class="chat-messages">
-                    <div class="chat-message ai-message">
-                        <strong>AI Assistant:</strong> สวัสดีครับ พบปัญหาอะไรให้ช่วยวิเคราะห์หรือไม่?
-                    </div>
-                </div>
-                <div id="image-preview-container"></div>
-                <div class="chat-input-area">
-                    <input type="text" id="chat-input" placeholder="ตัวอย่าง: ZPA ขึ้น error no.5">
-                    <button id="upload-btn" title="อัปโหลดรูปภาพ" class="button-back">📎</button>
-                    <button id="send-btn" class="button-link">ส่ง</button>
-                    <input type="file" id="image-upload-input" hidden accept="image/*">
-                </div>
-            </div>
+  // อ่านพารามิเตอร์ ?device=PP11
+  const params = new URLSearchParams(window.location.search);
+  const areaParam = (params.get('device') || '').trim(); // ชื่อโฟลเดอร์จริงใต้ /documents
 
-        </div>
-        <a href="index.html" class="button-back" style="margin-top: 30px;">&larr; ย้อนกลับ</a>
-    </main>
-    
-    <script src="manuals-loader.js"></script>
-    <script src="ai_chat.js"></script>
-</body>
-</html>
+  // ดึงฐานข้อมูลคู่มือจาก backend
+  let data;
+  try {
+    const res = await fetch('/api/manuals', { method: 'GET' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    data = await res.json();
+  } catch (e) {
+    console.error('Failed to load /api/manuals:', e);
+    if (titleEl) titleEl.textContent = 'โหลดรายการคู่มือไม่สำเร็จ';
+    return;
+  }
+
+  // ฟังก์ชันช่วย: สร้างการ์ด
+  const createManualCard = (areaName, file) => {
+    const card = document.createElement('div');
+    card.className = 'manual-card';
+
+    // รูปปก (optional)
+    const img = document.createElement('img');
+    img.alt = file.displayName || file.name;
+    img.loading = 'lazy';
+    img.src = file.image || 'images/placeholder.png';
+    img.onerror = () => { img.src = 'images/placeholder.png'; };
+    img.style.maxWidth = '100%';
+    img.style.borderRadius = '8px';
+
+    const name = document.createElement('div');
+    name.className = 'manual-name';
+    name.textContent = file.displayName || file.name;
+
+    const actions = document.createElement('div');
+    actions.className = 'manual-actions';
+
+    // ปุ่มเปิด PDF
+    const openBtn = document.createElement('a');
+    openBtn.href = `/${file.path}`; // เช่น documents/PP11/PP11_CO_M300E.pdf
+    openBtn.target = '_blank';
+    openBtn.rel = 'noopener noreferrer';
+    openBtn.className = 'button-link';
+    openBtn.textContent = 'เปิดดู PDF';
+
+    // ปุ่มคุยกับ AI (เลือกไฟล์นี้ในดรอปดาวน์)
+    const askBtn = document.createElement('button');
+    askBtn.className = 'button-secondary';
+    askBtn.textContent = 'คุยกับ AI';
+    askBtn.addEventListener('click', () => {
+      if (manualSelect) {
+        manualSelect.value = file.name; // ⚠️ ใช้ชื่อไฟล์จริง .pdf
+        manualSelect.dispatchEvent(new Event('change'));
+        // เลื่อนหน้าจอไปที่กล่องแชท
+        const chatBox = document.querySelector('.chat-container');
+        if (chatBox) chatBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+
+    actions.appendChild(openBtn);
+    actions.appendChild(askBtn);
+
+    card.appendChild(img);
+    card.appendChild(name);
+    card.appendChild(actions);
+
+    return card;
+  };
+
+  // เคลียร์กริดก่อนเริ่ม
+  if (gridEl) gridEl.innerHTML = '';
+
+  // เติมหัวข้อและเรนเดอร์การ์ด
+  if (areaParam && data[areaParam.toLowerCase()]) {
+    const areaObj = data[areaParam.toLowerCase()];
+    if (titleEl) titleEl.textContent = `คู่มือในหมวด ${areaObj.name}`;
+    areaObj.files.forEach(file => {
+      gridEl.appendChild(createManualCard(areaObj.name, file));
+    });
+    // เติมดรอปดาวน์เฉพาะ Area นี้
+    populateManualSelect([areaObj]);
+  } else {
+    if (titleEl) titleEl.textContent = 'รายการคู่มือทั้งหมด';
+    const allAreas = Object.values(data);
+    allAreas.forEach(areaObj => {
+      // แทรกหัวข้อย่อยของแต่ละ Area
+      const subHeader = document.createElement('h3');
+      subHeader.textContent = areaObj.name;
+      subHeader.style.margin = '16px 0 8px';
+      gridEl.appendChild(subHeader);
+
+      const subGrid = document.createElement('div');
+      subGrid.className = 'manuals-subgrid';
+
+      areaObj.files.forEach(file => {
+        subGrid.appendChild(createManualCard(areaObj.name, file));
+      });
+
+      gridEl.appendChild(subGrid);
+    });
+    // เติมดรอปดาวน์: รวมทุก Area
+    populateManualSelect(Object.values(data));
+  }
+
+  // เติมตัวเลือกใน <select id="manual-select"> ให้เป็น "ชื่อไฟล์จริง .pdf"
+  function populateManualSelect(areaList) {
+    if (!manualSelect) return;
+
+    // เก็บค่า "all" เดิมไว้เป็นตัวเลือกแรก
+    const keepAll = manualSelect.querySelector('option[value="all"]');
+    manualSelect.innerHTML = '';
+    if (keepAll) manualSelect.appendChild(keepAll);
+
+    areaList.forEach(areaObj => {
+      areaObj.files.forEach(file => {
+        const opt = document.createElement('option');
+        opt.value = file.name; // ⚠️ ชื่อไฟล์จริง เช่น PP11_CO_M300E.pdf
+        // แสดงชื่ออ่านง่าย ถ้ามี areaParam ให้โชว์ชื่อไฟล์เฉพาะ ถ้าไม่มีก็รวมชื่อ Area ไปด้วย
+        opt.textContent = areaParam ? (file.displayName || file.name)
+                                    : `${areaObj.name} - ${file.displayName || file.name}`;
+        manualSelect.appendChild(opt);
+      });
+    });
+  }
+});
