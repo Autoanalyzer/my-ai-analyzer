@@ -171,28 +171,10 @@ async function initializeVectorStore() {
 }
 
 // ✨ ฟังก์ชันใหม่สำหรับโหลดเอกสารเข้า Pinecone
-// ✨ ฟังก์ชันใหม่สำหรับโหลดเอกสารเข้า Pinecone (แก้ไขแล้ว)
-// ✨ ฟังก์ชันใหม่ที่แก้ไขแล้ว - เพิ่ม retry และ resume capability
 async function loadDocumentsIntoPinecone() {
   try {
     const documentsBasePath = path.join(__dirname, 'documents');
     const allDocuments = [];
-
-    // ✨ ตรวจสอบว่ามีข้อมูลอยู่แล้วหรือไม่
-    const pinecone = new Pinecone({
-      apiKey: process.env.PINECONE_API_KEY,
-    });
-    const index = pinecone.Index(process.env.PINECONE_INDEX_NAME);
-    const existingStats = await index.describeIndexStats();
-    const existingCount = existingStats.totalRecordCount || 0;
-    
-    console.log(`📊 Existing records in index: ${existingCount}`);
-    
-    // ถ้ามีข้อมูลมากพอแล้ว (90% ของที่คาดหวัง) ให้ข้าม
-    if (existingCount > 19000) {
-      console.log('✅ Index already has sufficient data. Skipping upload.');
-      return;
-    }
 
     const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
       .filter(d => d.isDirectory())
@@ -201,7 +183,6 @@ async function loadDocumentsIntoPinecone() {
     for (const area of areaFolders) {
       const areaPath = path.join(documentsBasePath, area);
       const files = await fs.readdir(areaPath);
-      
       for (const file of files) {
         const filePath = path.join(areaPath, file);
         const fileExt = path.extname(file).toLowerCase();
@@ -213,28 +194,13 @@ async function loadDocumentsIntoPinecone() {
             docsFromFile = await loader.load();
           } else if (fileExt === '.txt') {
             const textContent = await fs.readFile(filePath, 'utf-8');
-            docsFromFile.push({ 
-              pageContent: textContent, 
-              metadata: {
-                loc: { pageNumber: 1 }
-              } 
-            });
+            docsFromFile.push({ pageContent: textContent, metadata: {} });
           }
 
           docsFromFile.forEach(doc => {
-            const pageNumber = doc.metadata?.loc?.pageNumber || 1;
-            
-            doc.metadata = {
-              ...doc.metadata,
-              source: file.trim(),
-              filename: file.trim(),
-              area: area.trim(),
-              path: `/documents/${area.trim()}/${file.trim()}`,
-              pageNumber: pageNumber,
-              displayName: file.replace(/\.[^/.]+$/, "").replace(/_/g, ' ')
-            };
+            doc.metadata.source = file.trim();
+            doc.metadata.area = area.trim();
           });
-          
           allDocuments.push(...docsFromFile);
 
         } catch (fileError) {
@@ -247,103 +213,28 @@ async function loadDocumentsIntoPinecone() {
       chunkSize: 1000, 
       chunkOverlap: 200 
     });
-    
     const splitDocs = await textSplitter.splitDocuments(allDocuments);
-    
-    splitDocs.forEach(doc => {
-      if (!doc.metadata.path) {
-        doc.metadata.path = `/documents/${doc.metadata.area}/${doc.metadata.source}`;
-      }
-      if (!doc.metadata.filename) {
-        doc.metadata.filename = doc.metadata.source;
-      }
-    });
 
-    console.log(`📤 Total documents to upload: ${splitDocs.length}`);
-    console.log('📊 Sample metadata:', splitDocs[0]?.metadata);
+    console.log(`📤 Uploading ${splitDocs.length} document chunks to Pinecone...`);
     
-    // ✨ แก้ไข: ลด batch size และเพิ่ม retry logic
-    const batchSize = 20; // ลดจาก 50 เป็น 20
-    const startBatch = Math.floor(existingCount / batchSize);
-    const totalBatches = Math.ceil(splitDocs.length / batchSize);
-    
-    console.log(`📍 Starting from batch ${startBatch + 1} of ${totalBatches}`);
-    
-    for (let i = startBatch * batchSize; i < splitDocs.length; i += batchSize) {
+    // ✨ อัปโหลดเอกสารไปยัง Pinecone
+    const batchSize = 50;
+    for (let i = 0; i < splitDocs.length; i += batchSize) {
       const batch = splitDocs.slice(i, i + batchSize);
-      const batchNumber = Math.floor(i / batchSize) + 1;
+      await vectorStore.addDocuments(batch);
+      console.log(`📤 Uploaded batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(splitDocs.length / batchSize)}...`);
       
-      // ✨ Retry logic with timeout
-      let retries = 3;
-      let success = false;
-      
-      while (retries > 0 && !success) {
-        try {
-          console.log(`📤 Uploading batch ${batchNumber} of ${totalBatches} (${batch.length} docs)...`);
-          
-          // ✨ เพิ่ม timeout protection
-          await Promise.race([
-            vectorStore.addDocuments(batch),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('Upload timeout')), 30000) // 30 seconds timeout
-            )
-          ]);
-          
-          success = true;
-          console.log(`✅ Batch ${batchNumber} uploaded successfully`);
-          
-        } catch (error) {
-          retries--;
-          console.error(`❌ Failed batch ${batchNumber}. Retries left: ${retries}. Error: ${error.message}`);
-          
-          if (retries > 0) {
-            console.log(`⏳ Waiting 5 seconds before retry...`);
-            await new Promise(resolve => setTimeout(resolve, 5000));
-          } else {
-            console.error(`⚠️ Skipping batch ${batchNumber} after all retries failed`);
-            // Continue with next batch instead of stopping
-            break;
-          }
-        }
-      }
-      
-      // ✨ Progress tracking และ delay management
-      const progress = Math.round((batchNumber / totalBatches) * 100);
-      if (batchNumber % 10 === 0) {
-        console.log(`📊 Progress: ${progress}% complete (${batchNumber}/${totalBatches} batches)`);
-        // Check current count in Pinecone
-        try {
-          const currentStats = await index.describeIndexStats();
-          console.log(`📈 Current vectors in Pinecone: ${currentStats.totalRecordCount}`);
-        } catch (e) {
-          console.log('Could not fetch current stats');
-        }
-      }
-      
-      // ✨ Smart delay - พักนานขึ้นถ้าทำงานนานแล้ว
+      // รอเล็กน้อยเพื่อไม่ให้ทำงานหนักเกินไป
       if (i + batchSize < splitDocs.length) {
-        if (batchNumber % 50 === 0) {
-          // ทุก 50 batches พักนาน
-          console.log(`☕ Taking a longer break at batch ${batchNumber}...`);
-          await new Promise(resolve => setTimeout(resolve, 5000));
-        } else if (batchNumber % 10 === 0) {
-          // ทุก 10 batches พักปานกลาง
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        } else {
-          // ปกติพักสั้นๆ
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
-    // ✨ Final check
-    const finalStats = await index.describeIndexStats();
-    console.log(`✅ Upload completed! Total vectors in Pinecone: ${finalStats.totalRecordCount}`);
+    console.log('✅ All documents uploaded to Pinecone successfully.');
 
   } catch (error) {
     console.error('CRITICAL: Failed to load documents into Pinecone.', error);
-    // Don't throw - let server start anyway
-    console.log('⚠️ Server will start despite upload issues. You can retry with /admin/reset-pinecone endpoint.');
+    throw error;
   }
 }
 
@@ -353,7 +244,6 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
         let { sessionId, question, manual, area } = req.body;
         const imageFile = req.file;
 
-        // ✨ Session handling (ที่ขาดไป)
         if (!sessionId) {
             sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
             chatHistories[sessionId] = [];
@@ -371,41 +261,21 @@ app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
             return res.status(503).json({ error: 'AI knowledge base is not ready. Please wait.' });
         }
 
-        // ✨ แก้ไข: ใช้ filter ที่ถูกต้องสำหรับ Pinecone
+        // ✨ สำหรับ Pinecone จะใช้ metadata filter แบบใหม่
         let filter = {};
         if (manual && manual !== 'all') {
-            // ✨ ใช้ filename แทน source
-            filter = { 
-                filename: { $eq: manual.trim() }
-            };
-            console.log('🔍 Filtering by filename:', manual.trim());
+            filter.source = manual.trim();
         } else if (area) {
-            filter = { 
-                area: { $eq: area.trim() }
-            };
-            console.log('🔍 Filtering by area:', area.trim());
+            filter.area = area.trim();
         }
 
-        // ✨ Debug: ดูว่า filter เป็นอย่างไร
-        console.log('📋 Using filter:', JSON.stringify(filter));
-
-        // ✨ Query พร้อม filter ที่ถูกต้อง
+        // ✨ ใช้ similaritySearch ของ Pinecone (syntax เหมือนเดิม)
         const relevantDocs = await vectorStore.similaritySearch(question, 4, filter);
-        
-        // ✨ Debug: ดูผลลัพธ์ที่ได้
-        console.log(`📚 Found ${relevantDocs.length} relevant documents`);
-        if (relevantDocs.length > 0) {
-            console.log('📄 First doc metadata:', relevantDocs[0].metadata);
-        }
 
-        // ✨ แก้ไข: สร้าง context ที่มี path ที่ถูกต้อง
         const context = relevantDocs
           .map((doc) => {
-              // ใช้ path ที่เก็บไว้ใน metadata โดยตรง
-              const docPath = doc.metadata.path || `/documents/${doc.metadata.area}/${doc.metadata.source}`;
-              const pageNumber = doc.metadata.pageNumber || doc.metadata.loc?.pageNumber || 1;
-              
-              return `Source Document: ${doc.metadata.source} (Path for linking: ${docPath}, Page: ${pageNumber})\nContent:\n${doc.pageContent}`;
+              const docPath = `/documents/${doc.metadata.area}/${doc.metadata.source}`;
+              return `Source Document: ${doc.metadata.source} (Path for linking: ${docPath}, Page: ${doc.metadata.loc?.pageNumber || 1})\nContent:\n${doc.pageContent}`;
           })
           .join('\n\n---\n\n');
 
@@ -830,87 +700,6 @@ app.get('/api/manuals', checkAuth, async (req, res) => {
         console.error('Error creating manuals manifest:', error);
         res.status(500).json({ error: 'Could not retrieve manual list.' });
     }
-});
-// ✨ ฟังก์ชันสำหรับ clear และ reload ข้อมูลใหม่
-async function resetAndReloadPinecone() {
-  try {
-    console.log('🔄 Starting Pinecone index reset...');
-    
-    const pinecone = new Pinecone({
-      apiKey: process.env.PINECONE_API_KEY,
-    });
-
-    const index = pinecone.Index(process.env.PINECONE_INDEX_NAME);
-    
-    // ลบข้อมูลทั้งหมด (ระวัง: จะลบข้อมูลทั้งหมดใน index)
-    console.log('🗑️ Deleting all vectors...');
-    await index.deleteAll();
-    
-    // รอสักครู่ให้ Pinecone process การลบ
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
-    // โหลดข้อมูลใหม่
-    console.log('📚 Reloading documents...');
-    await loadDocumentsIntoPinecone();
-    
-    console.log('✅ Pinecone index reset completed!');
-  } catch (error) {
-    console.error('❌ Failed to reset Pinecone:', error);
-  }
-}
-
-// ✨ เพิ่ม endpoint สำหรับ reset (ใช้เฉพาะตอน development)
-app.post('/admin/reset-pinecone', checkAuth, async (req, res) => {
-  // ตรวจสอบว่าเป็น admin
-  if (req.session.username !== 'admin') {
-    return res.status(403).json({ error: 'Unauthorized' });
-  }
-  
-  try {
-    await resetAndReloadPinecone();
-    res.json({ message: 'Pinecone index reset successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to reset Pinecone' });
-  }
-});
-// ✨ เพิ่ม endpoint สำหรับดู upload status
-app.get('/admin/upload-status', checkAuth, async (req, res) => {
-  if (req.session.username !== 'admin') {
-    return res.status(403).json({ error: 'Unauthorized' });
-  }
-  
-  try {
-    const pinecone = new Pinecone({
-      apiKey: process.env.PINECONE_API_KEY,
-    });
-    const index = pinecone.Index(process.env.PINECONE_INDEX_NAME);
-    const stats = await index.describeIndexStats();
-    
-    res.json({
-      totalRecords: stats.totalRecordCount,
-      expectedRecords: 21000,
-      percentComplete: Math.round((stats.totalRecordCount / 21000) * 100),
-      status: stats.totalRecordCount > 19000 ? 'complete' : 'uploading',
-      message: `Current: ${stats.totalRecordCount} vectors, Expected: ~21,000 vectors`
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to get status' });
-  }
-});
-
-// ✨ เพิ่ม endpoint สำหรับ resume upload
-app.post('/admin/resume-upload', checkAuth, async (req, res) => {
-  if (req.session.username !== 'admin') {
-    return res.status(403).json({ error: 'Unauthorized' });
-  }
-  
-  try {
-    console.log('📍 Manually resuming upload...');
-    await loadDocumentsIntoPinecone();
-    res.json({ message: 'Upload resumed successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to resume upload' });
-  }
 });
 
 // ✨ แก้ไข startServer function
