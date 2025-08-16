@@ -412,7 +412,165 @@ app.get('/api/manuals', checkAuth, async (req, res) => {
         res.status(500).json({ error: 'Could not retrieve manual list.' });
     }
 });
+// ========== เพิ่มโค้ดนี้ใน server.js ก่อน startServer() ==========
 
+// Debug endpoint - ดู metadata
+app.get('/debug/check', checkAuth, async (req, res) => {
+    try {
+        if (!pineconeIndex) {
+            return res.status(503).json({ error: 'Pinecone not initialized' });
+        }
+        
+        // Query เพื่อดู metadata
+        const results = await pineconeIndex.query({
+            topK: 5,
+            includeMetadata: true,
+            includeValues: false,
+            vector: new Array(768).fill(0.1), // dummy vector
+        });
+        
+        res.json({
+            success: true,
+            totalMatches: results.matches.length,
+            metadata: results.matches.map(m => ({
+                id: m.id,
+                metadata: m.metadata || 'NO METADATA'
+            }))
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete all และ reload
+app.post('/debug/reset', checkAuth, async (req, res) => {
+    try {
+        console.log('🗑️ Deleting all vectors from Pinecone...');
+        
+        // ลบข้อมูลทั้งหมด
+        await pineconeIndex.deleteAll();
+        
+        console.log('✅ All vectors deleted. Waiting 5 seconds...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        console.log('📚 Starting to reload documents...');
+        
+        // โหลดใหม่ด้วย metadata ที่ถูกต้อง
+        await loadDocumentsIntoPinecone();
+        
+        const stats = await pineconeIndex.describeIndexStats();
+        
+        res.json({
+            success: true,
+            message: 'Data reset complete',
+            newStats: stats
+        });
+    } catch (error) {
+        console.error('Reset error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ========== แก้ไขฟังก์ชัน loadDocumentsIntoPinecone ==========
+// ให้แน่ใจว่า metadata ถูกต้อง
+
+async function loadDocumentsIntoPinecone() {
+  try {
+    const documentsBasePath = path.join(__dirname, 'documents');
+    const allDocuments = [];
+
+    const areaFolders = (await fs.readdir(documentsBasePath, { withFileTypes: true }))
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+
+    console.log('📁 Found areas:', areaFolders);
+
+    for (const area of areaFolders) {
+      const areaPath = path.join(documentsBasePath, area);
+      const files = await fs.readdir(areaPath);
+      
+      console.log(`📂 Processing area ${area} with ${files.length} files`);
+      
+      for (const file of files) {
+        const filePath = path.join(areaPath, file);
+        const fileExt = path.extname(file).toLowerCase();
+        let docsFromFile = [];
+
+        try {
+          if (fileExt === '.pdf') {
+            const loader = new PDFLoader(filePath);
+            docsFromFile = await loader.load();
+            console.log(`  ✅ Loaded PDF: ${file} (${docsFromFile.length} pages)`);
+          } else if (fileExt === '.txt') {
+            const textContent = await fs.readFile(filePath, 'utf-8');
+            docsFromFile.push({ 
+              pageContent: textContent, 
+              metadata: { loc: { pageNumber: 1 } } 
+            });
+            console.log(`  ✅ Loaded TXT: ${file}`);
+          }
+
+          // ⚠️ CRITICAL: ตั้ง metadata ให้ถูกต้อง
+          docsFromFile.forEach((doc, idx) => {
+            // สร้าง metadata ใหม่ทั้งหมด
+            doc.metadata = {
+              source: file.trim(),                    // ชื่อไฟล์
+              area: area.trim().toLowerCase(),        // ชื่อ area (lowercase)
+              fileName: file.trim(),                  // ชื่อไฟล์ซ้ำ
+              fullPath: `/documents/${area.trim()}/${file.trim()}`, // path เต็ม
+              pageNumber: doc.metadata?.loc?.pageNumber || (idx + 1), // หน้า
+              originalArea: area.trim()               // area ตัวเดิม (case sensitive)
+            };
+          });
+          
+          allDocuments.push(...docsFromFile);
+
+        } catch (fileError) {
+          console.error(`  ❌ Error processing ${file}:`, fileError.message);
+        }
+      }
+    }
+
+    console.log(`📄 Total documents loaded: ${allDocuments.length}`);
+
+    // Split documents
+    const textSplitter = new RecursiveCharacterTextSplitter({ 
+      chunkSize: 1000, 
+      chunkOverlap: 200 
+    });
+    const splitDocs = await textSplitter.splitDocuments(allDocuments);
+
+    console.log(`✂️ Split into ${splitDocs.length} chunks`);
+
+    // Upload to Pinecone in batches
+    const batchSize = 50;
+    for (let i = 0; i < splitDocs.length; i += batchSize) {
+      const batch = splitDocs.slice(i, i + batchSize);
+      
+      // ตรวจสอบ metadata ก่อน upload
+      console.log(`📤 Uploading batch ${Math.floor(i / batchSize) + 1}...`);
+      console.log('   Sample metadata:', batch[0]?.metadata);
+      
+      await vectorStore.addDocuments(batch);
+      
+      // รอเล็กน้อยระหว่าง batch
+      if (i + batchSize < splitDocs.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    console.log('✅ All documents uploaded to Pinecone successfully!');
+    
+    // Verify upload
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    const stats = await pineconeIndex.describeIndexStats();
+    console.log('📊 Final stats:', stats);
+
+  } catch (error) {
+    console.error('❌ CRITICAL ERROR in loadDocumentsIntoPinecone:', error);
+    throw error;
+  }
+}
 // Start server
 async function startServer() {
   await initializeVectorStore();
