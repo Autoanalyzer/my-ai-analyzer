@@ -470,7 +470,71 @@ app.post('/debug/reset', checkAuth, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+// ========== PLAN B: แก้ไข Chat ให้ง่ายที่สุด ==========
+// แทนที่ chat endpoint เดิมด้วยอันนี้
 
+app.post('/chat', checkAuth, upload.single('image'), async (req, res) => {
+    try {
+        let { sessionId, question, manual, area } = req.body;
+        
+        if (!question) {
+            return res.status(400).json({ error: 'Question is required.' });
+        }
+
+        // ถ้า vector store ไม่พร้อม ใช้ AI ตอบโดยตรง
+        let context = '';
+        
+        if (vectorStore) {
+            try {
+                // ค้นหาแบบง่ายๆ ไม่ใช้ filter
+                console.log('🔍 Simple search for:', question);
+                const docs = await vectorStore.similaritySearch(question, 3);
+                
+                if (docs.length > 0) {
+                    context = 'Reference information:\n' + 
+                        docs.map(d => d.pageContent.substring(0, 300)).join('\n\n');
+                    console.log('📚 Found', docs.length, 'documents');
+                }
+            } catch (err) {
+                console.error('Search failed:', err);
+            }
+        }
+
+        // Generate answer
+        const prompt = `You are a technical support assistant.
+        
+${manual && manual !== 'all' ? `User is asking about: ${manual}` : ''}
+${context ? `\nContext:\n${context}\n` : ''}
+
+Question: ${question}
+
+Please provide a helpful answer in Thai language.`;
+
+        const result = await generativeModel.generateContent(prompt);
+        const answer = result.response.text();
+
+        res.json({ 
+            answer,
+            sessionId: sessionId || 'default'
+        });
+
+    } catch (error) {
+        console.error('Error:', error);
+        
+        // Fallback response
+        res.json({
+            answer: `ขออภัยครับ เกิดข้อผิดพลาดในการประมวลผล กรุณาลองใหม่อีกครั้ง
+
+ข้อผิดพลาด: ${error.message}
+            
+💡 คำแนะนำ:
+- ลองรีเฟรชหน้าเว็บ
+- เลือกคู่มือใหม่
+- พิมพ์คำถามใหม่`,
+            sessionId: 'error'
+        });
+    }
+});
 // ========== แก้ไขฟังก์ชัน loadDocumentsIntoPinecone ==========
 // ให้แน่ใจว่า metadata ถูกต้อง
 
